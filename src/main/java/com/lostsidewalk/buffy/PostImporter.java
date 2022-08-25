@@ -16,6 +16,7 @@ import java.util.Queue;
 
 import static java.util.concurrent.TimeUnit.HOURS;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
+import static org.apache.commons.lang3.StringUtils.EMPTY;
 
 
 @Slf4j
@@ -52,9 +53,9 @@ public class PostImporter {
             importers.forEach(this::doImport);
         }
         //
-        // process successes
+        // process successful imports
         //
-        processSuccesses();
+        processImports();
         //
         // process errors
         //
@@ -74,13 +75,20 @@ public class PostImporter {
     //
     private int totalCt = 0, addCt = 0, skipCt = 0;
 
-    private void processSuccesses() {
+    private void processImports() {
         StagingPost sp;
         while ((sp = this.articleQueue.peek()) != null) {
+            this.clean(sp);
             this.success(sp);
             this.articleQueue.remove();
         }
         log.info("Post importer processed {} articles ({} added, {} skipped) at {}", this.totalCt, this.addCt, this.skipCt, Instant.now());
+    }
+
+    private void clean(StagingPost stagingPost) {
+        if (stagingPost.getPostDesc() == null) {
+            stagingPost.setPostDesc(EMPTY);
+        }
     }
 
     private void success(StagingPost stagingPost) {
