@@ -43,7 +43,7 @@ public class PostImporter {
     //
     // perform the import process once per hour
     //
-    @Scheduled(fixedDelay = 1L, timeUnit = HOURS)
+    @Scheduled(fixedDelayString = "${post.importer.fixed-delay}", timeUnit = HOURS)
     public void doImport() {
         log.info("Post import process starting at {}", FastDateFormat.getDateTimeInstance(FastDateFormat.MEDIUM, FastDateFormat.MEDIUM).format(new Date()));
         //
@@ -76,6 +76,7 @@ public class PostImporter {
     private int totalCt = 0, addCt = 0, skipCt = 0;
 
     private void processImports() {
+        log.info("Post importer processing {} articles at {}", this.articleQueue.size(), Instant.now());
         StagingPost sp;
         while ((sp = this.articleQueue.peek()) != null) {
             this.clean(sp);
