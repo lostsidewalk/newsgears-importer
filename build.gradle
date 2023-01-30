@@ -19,7 +19,7 @@ repositories {
 }
 
 dependencies {
-    api 'com.lostsidewalk.newsgears:newsgears-data:0.2'
+    api 'com.lostsidewalk.newsgears:newsgears-data:0.3'
 
     // SLF4J
     implementation 'org.slf4j:slf4j-api:2.0.5'
@@ -32,6 +32,8 @@ dependencies {
     implementation 'org.apache.commons:commons-collections4:4.4'
     // commons-lang
     implementation 'org.apache.commons:commons-lang3:3.12.0'
+    // guava
+    implementation 'com.google.guava:guava:31.1-jre'
     // javax-annotation
     implementation 'javax.annotation:javax.annotation-api:1.3.2'
 
@@ -50,7 +52,7 @@ publishing {
         maven(MavenPublication) {
             groupId = 'com.lostsidewalk.newsgears'
             artifactId = 'newsgears-importer'
-            version = '0.2'
+            version = '0.3'
 
             from components.java
         }

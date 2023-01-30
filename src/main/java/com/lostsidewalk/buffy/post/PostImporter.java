@@ -1,26 +1,32 @@
 package com.lostsidewalk.buffy.post;
 
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.Importer;
 import com.lostsidewalk.buffy.query.QueryDefinition;
+import com.lostsidewalk.buffy.query.QueryDefinitionDao;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import static com.lostsidewalk.buffy.post.PostImporter.PostResolution.ADD;
 import static com.lostsidewalk.buffy.post.PostImporter.PostResolution.SKIP;
+import static java.lang.Math.min;
+import static java.lang.Runtime.getRuntime;
+import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.apache.commons.collections4.CollectionUtils.isEmpty;
 import static org.apache.commons.collections4.CollectionUtils.size;
-import static org.apache.commons.lang3.StringUtils.EMPTY;
 
 
 @Slf4j
@@ -29,6 +35,9 @@ public class PostImporter {
 
     @Autowired
     StagingPostDao stagingPostDao;
+
+    @Autowired
+    QueryDefinitionDao queryDefinitionDao;
 
     @Autowired
     private BlockingQueue<StagingPost> articleQueue;
@@ -50,9 +59,9 @@ public class PostImporter {
         // start thread process successful imports
         //
         startImportProcessor();
-        int processorCt = Runtime.getRuntime().availableProcessors();
+        int processorCt = min(size(importers), getRuntime().availableProcessors() - 1);
         log.info("Starting importer thread pool: processCount={}", processorCt);
-        this.importerThreadPool = Executors.newFixedThreadPool(processorCt);
+        this.importerThreadPool = newFixedThreadPool(processorCt, new ThreadFactoryBuilder().setNameFormat("post-importer-%d").build());
     }
 
     @SuppressWarnings("unused")
@@ -67,6 +76,15 @@ public class PostImporter {
                     .withDetail("importProcessorIsRunning", processorIsRunning)
                     .withDetail("importerPoolIsShutdown", importerPoolIsShutdown)
                     .build();
+        }
+    }
+
+    @SuppressWarnings("unused")
+    public void doImport() {
+        try {
+            doImport(queryDefinitionDao.findAllActive());
+        } catch (Exception e) {
+            log.error("Something horrible happened while fetching queries to import: {}", e.getMessage());
         }
     }
 
@@ -101,6 +119,10 @@ public class PostImporter {
             log.error("Import process interrupted due to: {}", e.getMessage());
         }
         //
+        // update query definitions
+        //
+        updateQueryDefinitions(queryDefinitions);
+        //
         // process errors
         //
         processErrors();
@@ -108,9 +130,10 @@ public class PostImporter {
     //
     // import success processing
     //
+    private static final Logger importProcessorLog = LoggerFactory.getLogger("importProcessor");
     private void startImportProcessor() {
+        log.info("Starting import processor at {}", Instant.now());
         this.importProcessor = new Thread(() -> {
-            log.info("Starting import processor at {}", Instant.now());
             int totalCt = 0, addCt = 0, skipCt = 0;
             while (true) {
                 StagingPost sp = null;
@@ -120,7 +143,6 @@ public class PostImporter {
                     // ignored
                 }
                 if (sp != null) {
-                    cleanStagingPost(sp);
                     try {
                         PostResolution resolution = processStagingPost(sp);
 
@@ -131,21 +153,13 @@ public class PostImporter {
                         }
                         totalCt++;
                     } catch (Exception e) {
-                        log.error("Something horrible happened while processing an import: {}", e.getMessage());
+                        importProcessorLog.error("Something horrible happened while processing an import: {}", e.getMessage());
                     }
                 }
-                if (totalCt % 100 == 0) {
-                    log.info("Import processor metrics: total={}, add={}, skip={}", totalCt, addCt, skipCt);
-                }
+                importProcessorLog.debug("Import processor metrics: total={}, add={}, skip={}", totalCt, addCt, skipCt);
             }
         });
         this.importProcessor.start();
-    }
-
-    private void cleanStagingPost(StagingPost stagingPost) {
-        if (stagingPost.getPostDesc() == null) {
-            stagingPost.setPostDesc(EMPTY);
-        }
     }
 
     enum PostResolution {
@@ -182,12 +196,18 @@ public class PostImporter {
         log.debug("Persisting staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
         stagingPostDao.add(stagingPost);
     }
+
+    private void updateQueryDefinitions(List<QueryDefinition> queryDefinitions) {
+        log.info("Updating query definitions"); // TODO: implement this method
+    }
     //
     // import error processing
     //
     private void processErrors() {
         log.info("Processing {} import errors", size(errorQueue));
-        errorQueue.forEach(this::logFailure);
+        List<Throwable> errorList = new ArrayList<>(errorQueue.size());
+        errorQueue.drainTo(errorList);
+        errorList.forEach(this::logFailure);
     }
 
     private void logFailure(Throwable t) {
