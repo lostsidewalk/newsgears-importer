@@ -1,5 +1,7 @@
 package com.lostsidewalk.buffy.post;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.DataUpdateException;
@@ -24,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 
 import static java.lang.Math.min;
 import static java.lang.Runtime.getRuntime;
+import static java.util.Collections.synchronizedList;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.apache.commons.collections4.CollectionUtils.isEmpty;
 import static org.apache.commons.collections4.CollectionUtils.size;
@@ -81,7 +84,7 @@ public class PostImporter {
         try {
             doImport(queryDefinitionDao.findAllActive());
         } catch (Exception e) {
-            log.error("Something horrible happened while fetching queries to import: {}", e.getMessage());
+            log.error("Something horrible happened while during the scheduled import: {}", e.getMessage(), e);
         }
     }
 
@@ -99,7 +102,7 @@ public class PostImporter {
         //
         // run the importers in a FJP to populate the article queue
         //
-        List<ImportResult> allImportResults = new ArrayList<>(size(importers));
+        List<ImportResult> allImportResults = synchronizedList(new ArrayList<>(size(importers)));
         CountDownLatch latch = new CountDownLatch(size(importers));
         importers.forEach(importer -> importerThreadPool.submit(() -> {
             log.info("Starting importerId={} with {} active query definitions", importer.getImporterId(), size(queryDefinitions));
@@ -124,13 +127,13 @@ public class PostImporter {
         //
         // process import results
         //
-        processImportResults(allImportResults);
+        processImportResults(ImmutableList.copyOf(allImportResults));
     }
 
     private void processImportResults(List<ImportResult> importResults) throws DataAccessException, DataUpdateException {
         for (ImportResult importResult : importResults) {
-            processStagingPosts(importResult.getImportSet());
-            persistQueryMetrics(importResult.getQueryMetrics());
+            processStagingPosts(ImmutableSet.copyOf((importResult.getImportSet())));
+            persistQueryMetrics(ImmutableList.copyOf(importResult.getQueryMetrics()));
         }
     }
 
