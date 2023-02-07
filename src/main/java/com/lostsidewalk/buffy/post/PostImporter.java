@@ -2,26 +2,26 @@ package com.lostsidewalk.buffy.post;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.lostsidewalk.buffy.DataAccessException;
+import com.lostsidewalk.buffy.DataUpdateException;
 import com.lostsidewalk.buffy.Importer;
+import com.lostsidewalk.buffy.Importer.ImportResult;
 import com.lostsidewalk.buffy.query.QueryDefinition;
 import com.lostsidewalk.buffy.query.QueryDefinitionDao;
+import com.lostsidewalk.buffy.query.QueryMetrics;
+import com.lostsidewalk.buffy.query.QueryMetricsDao;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 
-import static com.lostsidewalk.buffy.post.PostImporter.PostResolution.ADD;
-import static com.lostsidewalk.buffy.post.PostImporter.PostResolution.SKIP;
 import static java.lang.Math.min;
 import static java.lang.Runtime.getRuntime;
 import static java.util.concurrent.Executors.newFixedThreadPool;
@@ -40,7 +40,7 @@ public class PostImporter {
     QueryDefinitionDao queryDefinitionDao;
 
     @Autowired
-    private BlockingQueue<StagingPost> articleQueue;
+    QueryMetricsDao queryMetricsDao;
 
     @Autowired
     private BlockingQueue<Throwable> errorQueue;
@@ -48,33 +48,30 @@ public class PostImporter {
     @Autowired
     List<Importer> importers;
 
-    private Thread importProcessor;
-
     private ExecutorService importerThreadPool;
 
     @PostConstruct
     public void postConstruct() {
         log.info("Importers constructed, importerCt={}", size(importers));
         //
-        // start thread process successful imports
+        // setup the importer thread pool
         //
-        startImportProcessor();
-        int processorCt = min(size(importers), getRuntime().availableProcessors() - 1);
+        int availableProcessors = getRuntime().availableProcessors();
+        int processorCt = availableProcessors > 1 ? min(size(importers), availableProcessors - 1) : availableProcessors;
+        processorCt = processorCt >= 2 ? processorCt - 1 : processorCt; // account for the import processor thread
         log.info("Starting importer thread pool: processCount={}", processorCt);
         this.importerThreadPool = newFixedThreadPool(processorCt, new ThreadFactoryBuilder().setNameFormat("post-importer-%d").build());
     }
 
     @SuppressWarnings("unused")
     public Health health() {
-        boolean processorIsRunning = this.importProcessor.isAlive();
         boolean importerPoolIsShutdown = this.importerThreadPool.isShutdown();
 
-        if (processorIsRunning && !importerPoolIsShutdown) {
+        if (!importerPoolIsShutdown) {
             return Health.up().build();
         } else {
             return Health.down()
-                    .withDetail("importProcessorIsRunning", processorIsRunning)
-                    .withDetail("importerPoolIsShutdown", importerPoolIsShutdown)
+                    .withDetail("importerPoolIsShutdown", false)
                     .build();
         }
     }
@@ -89,7 +86,7 @@ public class PostImporter {
     }
 
     @SuppressWarnings("unused")
-    public void doImport(List<QueryDefinition> queryDefinitions) {
+    public void doImport(List<QueryDefinition> queryDefinitions) throws DataAccessException, DataUpdateException {
         if (isEmpty(queryDefinitions)) {
             log.info("No queries defined, terminating the import process early.");
             return;
@@ -102,11 +99,13 @@ public class PostImporter {
         //
         // run the importers in a FJP to populate the article queue
         //
+        List<ImportResult> allImportResults = new ArrayList<>(size(importers));
         CountDownLatch latch = new CountDownLatch(size(importers));
         importers.forEach(importer -> importerThreadPool.submit(() -> {
             log.info("Starting importerId={} with {} active query definitions", importer.getImporterId(), size(queryDefinitions));
             try {
-                importer.doImport(queryDefinitions);
+                ImportResult importResult = importer.doImport(queryDefinitions);
+                allImportResults.add(importResult);
             } catch (Exception e) {
                 log.error("Something horrible happened on importerId={} due to: {}", importer.getImporterId(), e.getMessage(), e);
             }
@@ -119,63 +118,36 @@ public class PostImporter {
             log.error("Import process interrupted due to: {}", e.getMessage());
         }
         //
-        // update query definitions
-        //
-        updateQueryDefinitions(queryDefinitions);
-        //
         // process errors
         //
         processErrors();
-    }
-    //
-    // import success processing
-    //
-    private static final Logger importProcessorLog = LoggerFactory.getLogger("importProcessor");
-    private void startImportProcessor() {
-        log.info("Starting import processor at {}", Instant.now());
-        this.importProcessor = new Thread(() -> {
-            int totalCt = 0, addCt = 0, skipCt = 0;
-            while (true) {
-                StagingPost sp = null;
-                try {
-                    sp = articleQueue.take();
-                } catch (InterruptedException ignored) {
-                    // ignored
-                }
-                if (sp != null) {
-                    try {
-                        PostResolution resolution = processStagingPost(sp);
-
-                        if (resolution == SKIP) {
-                            skipCt++;
-                        } else if (resolution == ADD) {
-                            addCt++;
-                        }
-                        totalCt++;
-                    } catch (Exception e) {
-                        importProcessorLog.error("Something horrible happened while processing an import: {}", e.getMessage());
-                    }
-                }
-                importProcessorLog.debug("Import processor metrics: total={}, add={}, skip={}", totalCt, addCt, skipCt);
-            }
-        });
-        this.importProcessor.start();
+        //
+        // process import results
+        //
+        processImportResults(allImportResults);
     }
 
-    enum PostResolution {
-        SKIP, ADD
+    private void processImportResults(List<ImportResult> importResults) throws DataAccessException, DataUpdateException {
+        for (ImportResult importResult : importResults) {
+            processStagingPosts(importResult.getImportSet());
+            persistQueryMetrics(importResult.getQueryMetrics());
+        }
     }
 
-    private PostResolution processStagingPost(StagingPost stagingPost) throws DataAccessException {
+    private void processStagingPosts(Set<StagingPost> importSet) throws DataAccessException {
+        for (StagingPost sp : importSet) {
+            processStagingPost(sp);
+        }
+    }
+
+    private void processStagingPost(StagingPost stagingPost) throws DataAccessException {
         // compute a hash of the post, attempt to find it in the data source;
         if (find(stagingPost)) {
             // log if present,
             logAlreadyExists(stagingPost);
             logSkipImport(stagingPost);
-            return SKIP;
         } else {
             persistStagingPost(stagingPost);
-            return ADD;
         }
     }
 
@@ -197,8 +169,11 @@ public class PostImporter {
         stagingPostDao.add(stagingPost);
     }
 
-    private void updateQueryDefinitions(List<QueryDefinition> queryDefinitions) {
-        log.info("Updating query definitions"); // TODO: implement this method
+    private void persistQueryMetrics(List<QueryMetrics> queryMetrics) throws DataAccessException, DataUpdateException {
+        for (QueryMetrics qm : queryMetrics) {
+            log.debug("Persisting query metrics: queryId={}, importCt={}, importTimestamp={}", qm.getQueryId(), qm.getImportCt(), qm.getImportTimestamp());
+            queryMetricsDao.add(qm); // TODO: make this a batch operation
+        }
     }
     //
     // import error processing
