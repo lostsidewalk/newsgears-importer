@@ -17,9 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -131,26 +129,48 @@ public class PostImporter {
     }
 
     private void processImportResults(List<ImportResult> importResults) throws DataAccessException, DataUpdateException {
+        Map<Long, Set<StagingPost>> importSetByQueryId = new HashMap<>();
         for (ImportResult importResult : importResults) {
-            processStagingPosts(ImmutableSet.copyOf((importResult.getImportSet())));
-            persistQueryMetrics(ImmutableList.copyOf(importResult.getQueryMetrics()));
+            ImmutableSet<StagingPost> importSet = ImmutableSet.copyOf(importResult.getImportSet());
+            for (StagingPost s : importSet) {
+                importSetByQueryId.computeIfAbsent(s.getQueryId(), v -> new HashSet<>()).add(s);
+            }
+        }
+        for (ImportResult importResult : importResults) {
+            List<QueryMetrics> queryMetrics = importResult.getQueryMetrics();
+            for (QueryMetrics q : queryMetrics) {
+                Set<StagingPost> queryImportSet = importSetByQueryId.get(q.getQueryId());
+                procesQueryImportSet(q, queryImportSet);
+            }
         }
     }
 
-    private void processStagingPosts(Set<StagingPost> importSet) throws DataAccessException {
+    enum StagingPostResolution {
+        PERSISTED,
+        SKIP_ALREADY_EXISTS,
+    }
+
+    private void procesQueryImportSet(QueryMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException {
+        int persistCt = 0;
         for (StagingPost sp : importSet) {
-            processStagingPost(sp);
+            StagingPostResolution resolution = processStagingPost(sp);
+            if (resolution == StagingPostResolution.PERSISTED) {
+                persistCt++;
+            }
         }
+        processQueryMetrics(queryMetrics, persistCt);
     }
 
-    private void processStagingPost(StagingPost stagingPost) throws DataAccessException {
+    private StagingPostResolution processStagingPost(StagingPost stagingPost) throws DataAccessException, DataUpdateException {
         // compute a hash of the post, attempt to find it in the data source;
         if (find(stagingPost)) {
             // log if present,
             logAlreadyExists(stagingPost);
             logSkipImport(stagingPost);
+            return StagingPostResolution.SKIP_ALREADY_EXISTS;
         } else {
             persistStagingPost(stagingPost);
+            return StagingPostResolution.PERSISTED;
         }
     }
 
@@ -167,16 +187,15 @@ public class PostImporter {
         log.debug("Skipping staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
     }
 
-    private void persistStagingPost(StagingPost stagingPost) throws DataAccessException {
+    private void persistStagingPost(StagingPost stagingPost) throws DataAccessException, DataUpdateException {
         log.debug("Persisting staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
         stagingPostDao.add(stagingPost);
     }
 
-    private void persistQueryMetrics(List<QueryMetrics> queryMetrics) throws DataAccessException, DataUpdateException {
-        for (QueryMetrics qm : queryMetrics) {
-            log.debug("Persisting query metrics: queryId={}, importCt={}, importTimestamp={}", qm.getQueryId(), qm.getImportCt(), qm.getImportTimestamp());
-            queryMetricsDao.add(qm); // TODO: make this a batch operation
-        }
+    private void processQueryMetrics(QueryMetrics queryMetrics, int persistCt) throws DataAccessException, DataUpdateException {
+        log.debug("Persisting query metrics: queryId={}, importCt={}, importTimestamp={}", queryMetrics.getQueryId(), queryMetrics.getImportCt(), queryMetrics.getImportTimestamp());
+        queryMetrics.setPersistCt(persistCt);
+        queryMetricsDao.add(queryMetrics);
     }
     //
     // import error processing
