@@ -137,7 +137,7 @@ public class PostImporter {
             }
         }
         for (ImportResult importResult : importResults) {
-            List<QueryMetrics> queryMetrics = importResult.getQueryMetrics();
+            List<QueryMetrics> queryMetrics = ImmutableList.copyOf(importResult.getQueryMetrics());
             for (QueryMetrics q : queryMetrics) {
                 Set<StagingPost> queryImportSet = importSetByQueryId.get(q.getQueryId());
                 procesQueryImportSet(q, queryImportSet);
