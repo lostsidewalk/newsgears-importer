@@ -26,8 +26,7 @@ import static java.lang.Math.min;
 import static java.lang.Runtime.getRuntime;
 import static java.util.Collections.synchronizedList;
 import static java.util.concurrent.Executors.newFixedThreadPool;
-import static org.apache.commons.collections4.CollectionUtils.isEmpty;
-import static org.apache.commons.collections4.CollectionUtils.size;
+import static org.apache.commons.collections4.CollectionUtils.*;
 
 
 @Slf4j
@@ -140,7 +139,9 @@ public class PostImporter {
             List<QueryMetrics> queryMetrics = ImmutableList.copyOf(importResult.getQueryMetrics());
             for (QueryMetrics q : queryMetrics) {
                 Set<StagingPost> queryImportSet = importSetByQueryId.get(q.getQueryId());
-                procesQueryImportSet(q, queryImportSet);
+                if (isNotEmpty(queryImportSet)) {
+                    procesQueryImportSet(q, queryImportSet);
+                }
             }
         }
     }
