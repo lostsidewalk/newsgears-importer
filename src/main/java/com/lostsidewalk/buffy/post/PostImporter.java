@@ -7,6 +7,7 @@ import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.DataUpdateException;
 import com.lostsidewalk.buffy.Importer;
 import com.lostsidewalk.buffy.Importer.ImportResult;
+import com.lostsidewalk.buffy.discovery.FeedDiscoveryInfo;
 import com.lostsidewalk.buffy.query.QueryDefinition;
 import com.lostsidewalk.buffy.query.QueryDefinitionDao;
 import com.lostsidewalk.buffy.query.QueryMetrics;
@@ -85,8 +86,12 @@ public class PostImporter {
         }
     }
 
-    @SuppressWarnings("unused")
     public void doImport(List<QueryDefinition> queryDefinitions) throws DataAccessException, DataUpdateException {
+        doImport(queryDefinitions, Map.of());
+    }
+
+    @SuppressWarnings("unused")
+    public void doImport(List<QueryDefinition> queryDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException {
         if (isEmpty(queryDefinitions)) {
             log.info("No queries defined, terminating the import process early.");
             return;
@@ -104,7 +109,7 @@ public class PostImporter {
         importers.forEach(importer -> importerThreadPool.submit(() -> {
             log.info("Starting importerId={} with {} active query definitions", importer.getImporterId(), size(queryDefinitions));
             try {
-                ImportResult importResult = importer.doImport(queryDefinitions);
+                ImportResult importResult = importer.doImport(queryDefinitions, discoveryCache);
                 allImportResults.add(importResult);
             } catch (Exception e) {
                 log.error("Something horrible happened on importerId={} due to: {}", importer.getImporterId(), e.getMessage(), e);
@@ -127,7 +132,8 @@ public class PostImporter {
         processImportResults(ImmutableList.copyOf(allImportResults));
     }
 
-    private void processImportResults(List<ImportResult> importResults) throws DataAccessException, DataUpdateException {
+    @SuppressWarnings("unused")
+    public void processImportResults(List<ImportResult> importResults) throws DataAccessException, DataUpdateException {
         Map<Long, Set<StagingPost>> importSetByQueryId = new HashMap<>();
         for (ImportResult importResult : importResults) {
             ImmutableSet<StagingPost> importSet = ImmutableSet.copyOf(importResult.getImportSet());
