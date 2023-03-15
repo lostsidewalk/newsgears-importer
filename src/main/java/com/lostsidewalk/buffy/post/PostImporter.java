@@ -1,6 +1,5 @@
 package com.lostsidewalk.buffy.post;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.lostsidewalk.buffy.DataAccessException;
@@ -8,6 +7,7 @@ import com.lostsidewalk.buffy.DataUpdateException;
 import com.lostsidewalk.buffy.Importer;
 import com.lostsidewalk.buffy.Importer.ImportResult;
 import com.lostsidewalk.buffy.discovery.FeedDiscoveryInfo;
+import com.lostsidewalk.buffy.post.StagingPost.PostPubStatus;
 import com.lostsidewalk.buffy.query.QueryDefinition;
 import com.lostsidewalk.buffy.query.QueryDefinitionDao;
 import com.lostsidewalk.buffy.query.QueryMetrics;
@@ -23,8 +23,11 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 
+import static com.google.common.collect.ImmutableList.copyOf;
+import static com.lostsidewalk.buffy.post.PostImporter.StagingPostResolution.*;
 import static java.lang.Math.min;
 import static java.lang.Runtime.getRuntime;
+import static java.util.Calendar.DATE;
 import static java.util.Collections.synchronizedList;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.apache.commons.collections4.CollectionUtils.*;
@@ -102,7 +105,7 @@ public class PostImporter {
             return;
         }
         //
-        // run the importers in a FJP to populate the article queue
+        // run the importers to populate the article queue
         //
         List<ImportResult> allImportResults = synchronizedList(new ArrayList<>(size(importers)));
         CountDownLatch latch = new CountDownLatch(size(importers));
@@ -129,7 +132,7 @@ public class PostImporter {
         //
         // process import results
         //
-        processImportResults(ImmutableList.copyOf(allImportResults));
+        processImportResults(copyOf(allImportResults));
     }
 
     @SuppressWarnings("unused")
@@ -142,7 +145,7 @@ public class PostImporter {
             }
         }
         for (ImportResult importResult : importResults) {
-            List<QueryMetrics> queryMetrics = ImmutableList.copyOf(importResult.getQueryMetrics());
+            List<QueryMetrics> queryMetrics = copyOf(importResult.getQueryMetrics());
             for (QueryMetrics q : queryMetrics) {
                 Set<StagingPost> queryImportSet = importSetByQueryId.get(q.getQueryId());
                 if (isNotEmpty(queryImportSet)) {
@@ -154,18 +157,22 @@ public class PostImporter {
 
     enum StagingPostResolution {
         PERSISTED,
+        ARCHIVED,
         SKIP_ALREADY_EXISTS,
     }
 
     private void procesQueryImportSet(QueryMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException {
         int persistCt = 0;
+        int archiveCt = 0;
         for (StagingPost sp : importSet) {
             StagingPostResolution resolution = processStagingPost(sp);
-            if (resolution == StagingPostResolution.PERSISTED) {
+            if (resolution == PERSISTED) {
                 persistCt++;
+            } else if (resolution == ARCHIVED) {
+                archiveCt++;
             }
         }
-        processQueryMetrics(queryMetrics, persistCt);
+        processQueryMetrics(queryMetrics, persistCt, archiveCt);
     }
 
     private StagingPostResolution processStagingPost(StagingPost stagingPost) throws DataAccessException, DataUpdateException {
@@ -174,10 +181,15 @@ public class PostImporter {
             // log if present,
             logAlreadyExists(stagingPost);
             logSkipImport(stagingPost);
-            return StagingPostResolution.SKIP_ALREADY_EXISTS;
+            return SKIP_ALREADY_EXISTS;
         } else {
-            persistStagingPost(stagingPost);
-            return StagingPostResolution.PERSISTED;
+            Calendar cal = Calendar.getInstance();
+            cal.add(DATE, -90);
+            Date archiveDate = cal.getTime();
+            boolean doArchive = (stagingPost.getPublishTimestamp() == null || stagingPost.getPublishTimestamp().before(archiveDate));
+            persistStagingPost(stagingPost, doArchive);
+
+            return doArchive ? ARCHIVED : PERSISTED;
         }
     }
 
@@ -194,14 +206,19 @@ public class PostImporter {
         log.debug("Skipping staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
     }
 
-    private void persistStagingPost(StagingPost stagingPost) throws DataAccessException, DataUpdateException {
-        log.debug("Persisting staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
+    private void persistStagingPost(StagingPost stagingPost, boolean doArchive) throws DataAccessException, DataUpdateException {
+        log.debug("Persisting staging post from importerDesc={}, hash={}, doArchive={}", stagingPost.getImporterDesc(), stagingPost.getPostHash(), doArchive);
+        if (doArchive) {
+            stagingPost.setPostPubStatus(PostPubStatus.ARCHIVED);
+        }
         stagingPostDao.add(stagingPost);
     }
 
-    private void processQueryMetrics(QueryMetrics queryMetrics, int persistCt) throws DataAccessException, DataUpdateException {
-        log.debug("Persisting query metrics: queryId={}, importCt={}, importTimestamp={}", queryMetrics.getQueryId(), queryMetrics.getImportCt(), queryMetrics.getImportTimestamp());
+    private void processQueryMetrics(QueryMetrics queryMetrics, int persistCt, int archiveCt) throws DataAccessException, DataUpdateException {
+        log.debug("Persisting query metrics: queryId={}, importCt={}, importTimestamp={}, persistCt={}, archiveCt={}",
+                queryMetrics.getQueryId(), queryMetrics.getImportCt(), queryMetrics.getImportTimestamp(), persistCt, archiveCt);
         queryMetrics.setPersistCt(persistCt);
+        queryMetrics.setArchiveCt(archiveCt);
         queryMetricsDao.add(queryMetrics);
     }
     //
