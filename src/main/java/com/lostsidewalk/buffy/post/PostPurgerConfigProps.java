@@ -7,14 +7,24 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties("post.purger")
 public class PostPurgerConfigProps {
 
-    int maxAge;
+    int maxUnreadAge;
 
-    public int getMaxAge() {
-        return maxAge;
+    int maxReadAge;
+
+    public int getMaxUnreadAge() {
+        return maxUnreadAge;
     }
 
     @SuppressWarnings("unused")
-    public void setMaxAge(int maxAge) {
-        this.maxAge = maxAge;
+    public void setMaxUnreadAge(int maxUnreadAge) {
+        this.maxUnreadAge = maxUnreadAge;
+    }
+
+    public int getMaxReadAge() {
+        return maxReadAge;
+    }
+
+    public void setMaxReadAge(int maxReadAge) {
+        this.maxReadAge = maxReadAge;
     }
 }

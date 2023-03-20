@@ -2,6 +2,8 @@ package com.lostsidewalk.buffy.post;
 
 import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.DataUpdateException;
+import com.lostsidewalk.buffy.feed.FeedDefinitionDao;
+import com.lostsidewalk.buffy.query.QueryMetricsDao;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -18,6 +20,12 @@ public class PostPurger {
     StagingPostDao stagingPostDao;
 
     @Autowired
+    QueryMetricsDao queryMetricsDao;
+
+    @Autowired
+    FeedDefinitionDao feedDefinitionDao;
+
+    @Autowired
     PostPurgerConfigProps configProps;
 
     @PostConstruct
@@ -26,13 +34,31 @@ public class PostPurger {
     }
 
     @SuppressWarnings("unused")
-    public long doPurge() throws DataAccessException, DataUpdateException {
-        log.debug("Purger invoked, params={}", this.configProps);
-        Map<String, List<Long>> idleStagingPosts = stagingPostDao.findAllIdle(configProps.getMaxAge());
+    public int purgeArchivedPosts() throws DataAccessException, DataUpdateException {
+        log.debug("Purging ARCHIVED staging posts, params={}", this.configProps);
+        return stagingPostDao.purgeArchivePosts();
+    }
+
+    @SuppressWarnings("unused")
+    public long markIdlePostsForArchive() throws DataAccessException, DataUpdateException {
+        log.debug("Marking idle posts for archival, params={}", this.configProps);
+        Map<String, List<Long>> idleStagingPosts = stagingPostDao.findAllIdle(configProps.getMaxUnreadAge(), configProps.getMaxReadAge());
         int ct = 0;
         for (Map.Entry<String, List<Long>> e : idleStagingPosts.entrySet()) {
-            ct += stagingPostDao.deleteByIds(e.getKey(), e.getValue());
+            ct += stagingPostDao.archiveByIds(e.getKey(), e.getValue());
         }
         return ct;
+    }
+
+    @SuppressWarnings("unused")
+    public long purgeDeletedQueues() throws DataAccessException, DataUpdateException {
+        log.debug("Purging DELETED queues, params={}", this.configProps);
+        return feedDefinitionDao.purgeDeleted();
+    }
+
+    @SuppressWarnings("unused")
+    public long purgeOrphanedQueryMetrics() throws DataAccessException, DataUpdateException {
+        log.debug("Purging ORPHANED query metrics, params={}", this.configProps);
+        return queryMetricsDao.purgeOrphaned();
     }
 }
