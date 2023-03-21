@@ -149,7 +149,7 @@ public class PostImporter {
             for (QueryMetrics q : queryMetrics) {
                 Set<StagingPost> queryImportSet = importSetByQueryId.get(q.getQueryId());
                 if (isNotEmpty(queryImportSet)) {
-                    procesQueryImportSet(q, queryImportSet);
+                    processQueryImportSet(q, queryImportSet);
                 }
             }
         }
@@ -161,18 +161,21 @@ public class PostImporter {
         SKIP_ALREADY_EXISTS,
     }
 
-    private void procesQueryImportSet(QueryMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException {
+    private void processQueryImportSet(QueryMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException {
         int persistCt = 0;
+        int skipCt = 0;
         int archiveCt = 0;
         for (StagingPost sp : importSet) {
             StagingPostResolution resolution = processStagingPost(sp);
             if (resolution == PERSISTED) {
                 persistCt++;
+            } else if (resolution == SKIP_ALREADY_EXISTS) {
+                skipCt++;
             } else if (resolution == ARCHIVED) {
                 archiveCt++;
             }
         }
-        processQueryMetrics(queryMetrics, persistCt, archiveCt);
+        processQueryMetrics(queryMetrics, persistCt, skipCt, archiveCt);
     }
 
     private StagingPostResolution processStagingPost(StagingPost stagingPost) throws DataAccessException, DataUpdateException {
@@ -214,10 +217,11 @@ public class PostImporter {
         stagingPostDao.add(stagingPost);
     }
 
-    private void processQueryMetrics(QueryMetrics queryMetrics, int persistCt, int archiveCt) throws DataAccessException, DataUpdateException {
-        log.debug("Persisting query metrics: queryId={}, importCt={}, importTimestamp={}, persistCt={}, archiveCt={}",
-                queryMetrics.getQueryId(), queryMetrics.getImportCt(), queryMetrics.getImportTimestamp(), persistCt, archiveCt);
+    private void processQueryMetrics(QueryMetrics queryMetrics, int persistCt, int skipCt, int archiveCt) throws DataAccessException, DataUpdateException {
+        log.debug("Persisting query metrics: queryId={}, importCt={}, importTimestamp={}, persistCt={}, skipCt={}, archiveCt={}",
+                queryMetrics.getQueryId(), queryMetrics.getImportCt(), queryMetrics.getImportTimestamp(), persistCt, skipCt, archiveCt);
         queryMetrics.setPersistCt(persistCt);
+        queryMetrics.setSkipCt(skipCt);
         queryMetrics.setArchiveCt(archiveCt);
         queryMetricsDao.add(queryMetrics);
     }
