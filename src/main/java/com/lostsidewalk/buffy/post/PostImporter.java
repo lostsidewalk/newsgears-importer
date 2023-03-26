@@ -1,6 +1,7 @@
 package com.lostsidewalk.buffy.post;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.DataUpdateException;
@@ -94,8 +95,8 @@ public class PostImporter {
     }
 
     @SuppressWarnings("unused")
-    public void doImport(List<QueryDefinition> queryDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException {
-        if (isEmpty(queryDefinitions)) {
+    public void doImport(List<QueryDefinition> allQueryDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException {
+        if (isEmpty(allQueryDefinitions)) {
             log.info("No queries defined, terminating the import process early.");
             return;
         }
@@ -105,34 +106,47 @@ public class PostImporter {
             return;
         }
         //
-        // run the importers to populate the article queue
+        // partition queries into chunks
         //
-        List<ImportResult> allImportResults = synchronizedList(new ArrayList<>(size(importers)));
-        CountDownLatch latch = new CountDownLatch(size(importers));
-        importers.forEach(importer -> importerThreadPool.submit(() -> {
-            log.info("Starting importerId={} with {} active query definitions", importer.getImporterId(), size(queryDefinitions));
+        List<List<QueryDefinition>> queryBundles = Lists.partition(allQueryDefinitions, 100);
+        int bundleIdx = 1;
+        for (List<QueryDefinition> queryBundle : queryBundles) {
+            //
+            // run the importers to populate the article queue
+            //
+            List<ImportResult> allImportResults = synchronizedList(new ArrayList<>(size(importers)));
+            CountDownLatch latch = new CountDownLatch(size(importers));
+            log.info("Starting import of bundle index {}", bundleIdx);
+            importers.forEach(importer -> importerThreadPool.submit(() -> {
+                log.info("Starting importerId={} with {} bundled query definitions", importer.getImporterId(), size(queryBundle));
+                try {
+                    ImportResult importResult = importer.doImport(queryBundle, discoveryCache);
+                    allImportResults.add(importResult);
+                } catch (Exception e) {
+                    log.error("Something horrible happened on importerId={} due to: {}", importer.getImporterId(), e.getMessage(), e);
+                }
+                log.info("Completed importerId={} for all bundled queries", importer.getImporterId());
+                latch.countDown();
+            }));
             try {
-                ImportResult importResult = importer.doImport(queryDefinitions, discoveryCache);
-                allImportResults.add(importResult);
-            } catch (Exception e) {
-                log.error("Something horrible happened on importerId={} due to: {}", importer.getImporterId(), e.getMessage(), e);
+                latch.await();
+            } catch (InterruptedException e) {
+                log.error("Import process interrupted due to: {}", e.getMessage());
+                break;
             }
-            log.info("Completed importerId={}", importer.getImporterId());
-            latch.countDown();
-        }));
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            log.error("Import process interrupted due to: {}", e.getMessage());
+            //
+            // process errors
+            //
+            processErrors();
+            //
+            // process import results
+            //
+            processImportResults(copyOf(allImportResults));
+            //
+            // increment bundle index (for logging)
+            //
+            bundleIdx++;
         }
-        //
-        // process errors
-        //
-        processErrors();
-        //
-        // process import results
-        //
-        processImportResults(copyOf(allImportResults));
     }
 
     @SuppressWarnings("unused")
