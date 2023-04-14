@@ -203,7 +203,15 @@ public class PostImporter {
             Calendar cal = Calendar.getInstance();
             cal.add(DATE, -90);
             Date archiveDate = cal.getTime();
-            boolean doArchive = (stagingPost.getPublishTimestamp() == null || stagingPost.getPublishTimestamp().before(archiveDate));
+            // archive criteria:
+            //
+            // (1) missing both publish timestamp and last updated timestamp (spam injected into the feed)
+            boolean hasTimestamp = (stagingPost.getPublishTimestamp() != null || stagingPost.getLastUpdatedTimestamp() != null);
+            // (2) published before the archive date without any updates
+            boolean publishedTooLongAgoNoUpdates = stagingPost.getLastUpdatedTimestamp() == null && stagingPost.getPublishTimestamp() != null && stagingPost.getPublishTimestamp().before(archiveDate);
+            // (3) most recent update is before the archive date
+            boolean mostRecentUpdateIsTooOld = stagingPost.getLastUpdatedTimestamp() != null && stagingPost.getLastUpdatedTimestamp().before(archiveDate);
+            boolean doArchive = (!hasTimestamp || publishedTooLongAgoNoUpdates || mostRecentUpdateIsTooOld);
             persistStagingPost(stagingPost, doArchive);
 
             return doArchive ? ARCHIVED : PERSISTED;
