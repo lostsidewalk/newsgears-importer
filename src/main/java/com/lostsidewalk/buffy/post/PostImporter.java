@@ -5,9 +5,9 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.DataUpdateException;
+import com.lostsidewalk.buffy.discovery.FeedDiscoveryInfo;
 import com.lostsidewalk.buffy.importer.Importer;
 import com.lostsidewalk.buffy.importer.Importer.ImportResult;
-import com.lostsidewalk.buffy.discovery.FeedDiscoveryInfo;
 import com.lostsidewalk.buffy.post.StagingPost.PostPubStatus;
 import com.lostsidewalk.buffy.query.QueryDefinition;
 import com.lostsidewalk.buffy.query.QueryDefinitionDao;
@@ -19,12 +19,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 
 import static com.google.common.collect.ImmutableList.copyOf;
+import static com.lostsidewalk.buffy.post.ImportScheduler.ImportSchedule.scheduleNamed;
 import static com.lostsidewalk.buffy.post.PostImporter.StagingPostResolution.*;
 import static java.lang.Math.min;
 import static java.lang.Runtime.getRuntime;
@@ -32,6 +34,7 @@ import static java.util.Calendar.DATE;
 import static java.util.Collections.synchronizedList;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.apache.commons.collections4.CollectionUtils.*;
+import static org.apache.commons.lang3.StringUtils.isBlank;
 
 
 @Slf4j
@@ -84,10 +87,25 @@ public class PostImporter {
     @SuppressWarnings("unused")
     public void doImport() {
         try {
-            doImport(queryDefinitionDao.findAllActive());
+            List<QueryDefinition> scheduledQueries = getScheduledQueries();
+            doImport(scheduledQueries);
         } catch (Exception e) {
             log.error("Something horrible happened while during the scheduled import: {}", e.getMessage(), e);
         }
+    }
+
+    private List<QueryDefinition> getScheduledQueries() throws DataAccessException {
+        LocalDateTime now = LocalDateTime.now();
+        return queryDefinitionDao.findAllActive().stream().filter(qd -> scheduleMatches(qd.getImportSchedule(), now)).toList();
+    }
+
+    private boolean scheduleMatches(String schedule, LocalDateTime localDateTime) {
+        if (isBlank(schedule)) {
+            return false;
+        }
+        return scheduleNamed(schedule)
+                .map(s -> s.matches(localDateTime))
+                .orElse(false);
     }
 
     public void doImport(List<QueryDefinition> queryDefinitions) throws DataAccessException, DataUpdateException {
@@ -139,7 +157,7 @@ public class PostImporter {
             //
             processErrors();
             //
-            // process import results
+            // process import results (persist staging posts and query metrics)
             //
             processImportResults(copyOf(allImportResults));
             //

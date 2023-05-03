@@ -36,9 +36,17 @@ public class PostPurger {
     @SuppressWarnings("unused")
     public int purgeArchivedPosts() throws DataAccessException, DataUpdateException {
         log.debug("Purging ARCHIVED staging posts, params={}", this.configProps);
-        return stagingPostDao.purgeArchivePosts();
+        return stagingPostDao.purgeArchivedPosts(this.configProps.getMaxPostAge());
     }
 
+    /**
+     * posts that are READ and were imported GT max read age days ago -> ARCHIVED
+     * posts that are UNREAD and were imported GT max unread age days ago -> ARCHIVED
+     *
+     * @return
+     * @throws DataAccessException
+     * @throws DataUpdateException
+     */
     @SuppressWarnings("unused")
     public long markIdlePostsForArchive() throws DataAccessException, DataUpdateException {
         log.debug("Marking idle posts for archival, params={}", this.configProps);

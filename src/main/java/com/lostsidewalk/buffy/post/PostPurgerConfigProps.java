@@ -11,6 +11,8 @@ public class PostPurgerConfigProps {
 
     int maxReadAge;
 
+    int maxPostAge;
+
     public int getMaxUnreadAge() {
         return maxUnreadAge;
     }
@@ -26,5 +28,13 @@ public class PostPurgerConfigProps {
 
     public void setMaxReadAge(int maxReadAge) {
         this.maxReadAge = maxReadAge;
+    }
+
+    public int getMaxPostAge() {
+        return maxPostAge;
+    }
+
+    public void setMaxPostAge(int maxPostAge) {
+        this.maxPostAge = maxPostAge;
     }
 }
