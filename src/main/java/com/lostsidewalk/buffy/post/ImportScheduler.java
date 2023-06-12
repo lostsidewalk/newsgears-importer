@@ -1,9 +1,9 @@
 package com.lostsidewalk.buffy.post;
 
-import com.lostsidewalk.buffy.query.QueryDefinition;
-import com.lostsidewalk.buffy.query.QueryDefinitionDao;
-import com.lostsidewalk.buffy.query.QueryMetrics;
-import com.lostsidewalk.buffy.query.QueryMetricsDao;
+import com.lostsidewalk.buffy.subscription.SubscriptionDefinition;
+import com.lostsidewalk.buffy.subscription.SubscriptionDefinitionDao;
+import com.lostsidewalk.buffy.subscription.SubscriptionMetrics;
+import com.lostsidewalk.buffy.subscription.SubscriptionMetricsDao;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -73,10 +73,10 @@ public class ImportScheduler {
     }
 
     @Autowired
-    QueryDefinitionDao queryDefinitionDao;
+    SubscriptionDefinitionDao subscriptionDefinitionDao;
 
     @Autowired
-    QueryMetricsDao queryMetricsDao;
+    SubscriptionMetricsDao subscriptionMetricsDao;
 
     @PostConstruct
     public void postConstruct() {
@@ -86,30 +86,30 @@ public class ImportScheduler {
     @SuppressWarnings("unused")
     public void update() {
         try {
-            List<QueryDefinition> allActiveQueries = queryDefinitionDao.findAllActive();
+            List<SubscriptionDefinition> allActiveSubscriptions = subscriptionDefinitionDao.findAllActive();
             List<Object[]> updates = new ArrayList<>();
-            for (QueryDefinition q : allActiveQueries) {
+            for (SubscriptionDefinition q : allActiveSubscriptions) {
                 ImportSchedule currentSchedule = ImportSchedule.scheduleNamed(q.getImportSchedule()).orElse(null);
-                List<QueryMetrics> queryMetrics = queryMetricsDao.findByQueryId(q.getUsername(), q.getId());
-                ImportSchedule newSchedule = reschedule(q.getId(), currentSchedule, queryMetrics);
+                List<SubscriptionMetrics> subscriptionMetrics = subscriptionMetricsDao.findBySubscriptionId(q.getUsername(), q.getId());
+                ImportSchedule newSchedule = reschedule(q.getId(), currentSchedule, subscriptionMetrics);
                 if (newSchedule != null) {
                     updates.add(new Object[] { newSchedule.name, q.getId() });
                 }
             }
             if (isNotEmpty(updates)) {
-                queryDefinitionDao.updateImportSchedules(updates);
+                subscriptionDefinitionDao.updateImportSchedules(updates);
             }
         } catch (Exception e) {
             log.error("Something horrible happened while during the import schedule update: {}", e.getMessage(), e);
         }
     }
 
-    private ImportSchedule reschedule(Long queryId, ImportSchedule targetSchedule, List<QueryMetrics> queryMetrics) {
-        // sort query metrics by most recent
-        queryMetrics.sort(comparing(QueryMetrics::getImportTimestamp).reversed());
+    private ImportSchedule reschedule(Long subscriptionId, ImportSchedule targetSchedule, List<SubscriptionMetrics> subscriptionMetrics) {
+        // sort subscription metrics by most recent
+        subscriptionMetrics.sort(comparing(SubscriptionMetrics::getImportTimestamp).reversed());
         int importMisses = 0;
-        log.debug("Inspecting query metrics: queryId={}, qmCt={}", queryId, size(queryMetrics));
-        for (QueryMetrics qm : queryMetrics) {
+        log.debug("Inspecting subscription metrics: subscriptionId={}, qmCt={}", subscriptionId, size(subscriptionMetrics));
+        for (SubscriptionMetrics qm : subscriptionMetrics) {
             if (qm.getImportCt() != null && qm.getErrorType() == null) {
                 Integer persistCt = qm.getPersistCt();
                 ImportSchedule schedule = scheduleNamed(qm.getImportSchedule()).orElse(null);
@@ -123,10 +123,10 @@ public class ImportScheduler {
         }
         if (importMisses > targetSchedule.maxMisses) {
             // if the number of import misses for the current schedule is exceeded, downgrade
-            // the query to the next lower schedule
+            // the subscription to the next lower schedule
             ImportSchedule newSchedule = targetSchedule.downgrade();
-            log.info("Downgrading import schedule for queryId={}: oldSchedule={}, newSchedule={}, importMisses={} exceeds maxMisses={}",
-                    queryId, targetSchedule, newSchedule, importMisses, targetSchedule.maxMisses);
+            log.info("Downgrading import schedule for subscriptionId={}: oldSchedule={}, newSchedule={}, importMisses={} exceeds maxMisses={}",
+                    subscriptionId, targetSchedule, newSchedule, importMisses, targetSchedule.maxMisses);
             return newSchedule;
         } else {
             log.debug("Import miss count ({}) within max limit ({}) for this schedule ({})", importMisses, targetSchedule.maxMisses, targetSchedule.name);

@@ -2,8 +2,8 @@ package com.lostsidewalk.buffy.post;
 
 import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.DataUpdateException;
-import com.lostsidewalk.buffy.feed.FeedDefinitionDao;
-import com.lostsidewalk.buffy.query.QueryMetricsDao;
+import com.lostsidewalk.buffy.queue.QueueDefinitionDao;
+import com.lostsidewalk.buffy.subscription.SubscriptionMetricsDao;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -20,10 +20,10 @@ public class PostPurger {
     StagingPostDao stagingPostDao;
 
     @Autowired
-    QueryMetricsDao queryMetricsDao;
+    SubscriptionMetricsDao subscriptionMetricsDao;
 
     @Autowired
-    FeedDefinitionDao feedDefinitionDao;
+    QueueDefinitionDao queueDefinitionDao;
 
     @Autowired
     PostPurgerConfigProps configProps;
@@ -61,12 +61,12 @@ public class PostPurger {
     @SuppressWarnings("unused")
     public long purgeDeletedQueues() throws DataAccessException, DataUpdateException {
         log.debug("Purging DELETED queues, params={}", this.configProps);
-        return feedDefinitionDao.purgeDeleted();
+        return queueDefinitionDao.purgeDeleted();
     }
 
     @SuppressWarnings("unused")
     public long purgeOrphanedQueryMetrics() throws DataAccessException, DataUpdateException {
         log.debug("Purging ORPHANED query metrics, params={}", this.configProps);
-        return queryMetricsDao.purgeOrphaned();
+        return subscriptionMetricsDao.purgeOrphaned();
     }
 }

@@ -9,10 +9,10 @@ import com.lostsidewalk.buffy.discovery.FeedDiscoveryInfo;
 import com.lostsidewalk.buffy.importer.Importer;
 import com.lostsidewalk.buffy.importer.Importer.ImportResult;
 import com.lostsidewalk.buffy.post.StagingPost.PostPubStatus;
-import com.lostsidewalk.buffy.query.QueryDefinition;
-import com.lostsidewalk.buffy.query.QueryDefinitionDao;
-import com.lostsidewalk.buffy.query.QueryMetrics;
-import com.lostsidewalk.buffy.query.QueryMetricsDao;
+import com.lostsidewalk.buffy.subscription.SubscriptionDefinition;
+import com.lostsidewalk.buffy.subscription.SubscriptionDefinitionDao;
+import com.lostsidewalk.buffy.subscription.SubscriptionMetrics;
+import com.lostsidewalk.buffy.subscription.SubscriptionMetricsDao;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,10 +45,10 @@ public class PostImporter {
     StagingPostDao stagingPostDao;
 
     @Autowired
-    QueryDefinitionDao queryDefinitionDao;
+    SubscriptionDefinitionDao subscriptionDefinitionDao;
 
     @Autowired
-    QueryMetricsDao queryMetricsDao;
+    SubscriptionMetricsDao subscriptionMetricsDao;
 
     @Autowired
     private BlockingQueue<Throwable> errorQueue;
@@ -87,16 +87,16 @@ public class PostImporter {
     @SuppressWarnings("unused")
     public void doImport() {
         try {
-            List<QueryDefinition> scheduledQueries = getScheduledQueries();
-            doImport(scheduledQueries);
+            List<SubscriptionDefinition> scheduledSubscriptions = getScheduledSubscriptions();
+            doImport(scheduledSubscriptions);
         } catch (Exception e) {
             log.error("Something horrible happened while during the scheduled import: {}", e.getMessage(), e);
         }
     }
 
-    private List<QueryDefinition> getScheduledQueries() throws DataAccessException {
+    private List<SubscriptionDefinition> getScheduledSubscriptions() throws DataAccessException {
         LocalDateTime now = LocalDateTime.now();
-        return queryDefinitionDao.findAllActive().stream().filter(qd -> scheduleMatches(qd.getImportSchedule(), now)).toList();
+        return subscriptionDefinitionDao.findAllActive().stream().filter(qd -> scheduleMatches(qd.getImportSchedule(), now)).toList();
     }
 
     private boolean scheduleMatches(String schedule, LocalDateTime localDateTime) {
@@ -108,14 +108,14 @@ public class PostImporter {
                 .orElse(false);
     }
 
-    public void doImport(List<QueryDefinition> queryDefinitions) throws DataAccessException, DataUpdateException {
-        doImport(queryDefinitions, Map.of());
+    public void doImport(List<SubscriptionDefinition> subscriptionDefinitions) throws DataAccessException, DataUpdateException {
+        doImport(subscriptionDefinitions, Map.of());
     }
 
     @SuppressWarnings("unused")
-    public void doImport(List<QueryDefinition> allQueryDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException {
-        if (isEmpty(allQueryDefinitions)) {
-            log.info("No queries defined, terminating the import process early.");
+    public void doImport(List<SubscriptionDefinition> allSubscriptionDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException {
+        if (isEmpty(allSubscriptionDefinitions)) {
+            log.info("No subscriptions defined, terminating the import process early.");
             return;
         }
 
@@ -126,9 +126,9 @@ public class PostImporter {
         //
         // partition queries into chunks
         //
-        List<List<QueryDefinition>> queryBundles = Lists.partition(allQueryDefinitions, 100);
+        List<List<SubscriptionDefinition>> queryBundles = Lists.partition(allSubscriptionDefinitions, 100);
         int bundleIdx = 1;
-        for (List<QueryDefinition> queryBundle : queryBundles) {
+        for (List<SubscriptionDefinition> queryBundle : queryBundles) {
             //
             // run the importers to populate the article queue
             //
@@ -136,14 +136,14 @@ public class PostImporter {
             CountDownLatch latch = new CountDownLatch(size(importers));
             log.info("Starting import of bundle index {}", bundleIdx);
             importers.forEach(importer -> importerThreadPool.submit(() -> {
-                log.info("Starting importerId={} with {} bundled query definitions", importer.getImporterId(), size(queryBundle));
+                log.info("Starting importerId={} with {} bundled subscriptions", importer.getImporterId(), size(queryBundle));
                 try {
                     ImportResult importResult = importer.doImport(queryBundle, discoveryCache);
                     allImportResults.add(importResult);
                 } catch (Exception e) {
                     log.error("Something horrible happened on importerId={} due to: {}", importer.getImporterId(), e.getMessage(), e);
                 }
-                log.info("Completed importerId={} for all bundled queries", importer.getImporterId());
+                log.info("Completed importerId={} for all bundled subscriptions", importer.getImporterId());
                 latch.countDown();
             }));
             try {
@@ -173,13 +173,13 @@ public class PostImporter {
         for (ImportResult importResult : importResults) {
             ImmutableSet<StagingPost> importSet = ImmutableSet.copyOf(importResult.getImportSet());
             for (StagingPost s : importSet) {
-                importSetByQueryId.computeIfAbsent(s.getQueryId(), v -> new HashSet<>()).add(s);
+                importSetByQueryId.computeIfAbsent(s.getSubscriptionId(), v -> new HashSet<>()).add(s);
             }
         }
         for (ImportResult importResult : importResults) {
-            List<QueryMetrics> queryMetrics = copyOf(importResult.getQueryMetrics());
-            for (QueryMetrics q : queryMetrics) {
-                Set<StagingPost> queryImportSet = importSetByQueryId.get(q.getQueryId());
+            List<SubscriptionMetrics> queryMetrics = copyOf(importResult.getSubscriptionMetrics());
+            for (SubscriptionMetrics q : queryMetrics) {
+                Set<StagingPost> queryImportSet = importSetByQueryId.get(q.getSubscriptionId());
                 if (isNotEmpty(queryImportSet)) {
                     processQueryImportSet(q, queryImportSet);
                 }
@@ -193,7 +193,7 @@ public class PostImporter {
         SKIP_ALREADY_EXISTS,
     }
 
-    private void processQueryImportSet(QueryMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException {
+    private void processQueryImportSet(SubscriptionMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException {
         int persistCt = 0;
         int skipCt = 0;
         int archiveCt = 0;
@@ -257,13 +257,13 @@ public class PostImporter {
         stagingPostDao.add(stagingPost);
     }
 
-    private void processQueryMetrics(QueryMetrics queryMetrics, int persistCt, int skipCt, int archiveCt) throws DataAccessException, DataUpdateException {
-        log.debug("Persisting query metrics: queryId={}, importCt={}, importTimestamp={}, persistCt={}, skipCt={}, archiveCt={}",
-                queryMetrics.getQueryId(), queryMetrics.getImportCt(), queryMetrics.getImportTimestamp(), persistCt, skipCt, archiveCt);
+    private void processQueryMetrics(SubscriptionMetrics queryMetrics, int persistCt, int skipCt, int archiveCt) throws DataAccessException, DataUpdateException {
+        log.debug("Persisting query metrics: subscriptionId={}, importCt={}, importTimestamp={}, persistCt={}, skipCt={}, archiveCt={}",
+                queryMetrics.getSubscriptionId(), queryMetrics.getImportCt(), queryMetrics.getImportTimestamp(), persistCt, skipCt, archiveCt);
         queryMetrics.setPersistCt(persistCt);
         queryMetrics.setSkipCt(skipCt);
         queryMetrics.setArchiveCt(archiveCt);
-        queryMetricsDao.add(queryMetrics);
+        subscriptionMetricsDao.add(queryMetrics);
     }
     //
     // import error processing
