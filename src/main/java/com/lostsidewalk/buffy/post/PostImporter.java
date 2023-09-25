@@ -4,6 +4,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.lostsidewalk.buffy.DataAccessException;
+import com.lostsidewalk.buffy.DataConflictException;
 import com.lostsidewalk.buffy.DataUpdateException;
 import com.lostsidewalk.buffy.discovery.FeedDiscoveryInfo;
 import com.lostsidewalk.buffy.importer.Importer;
@@ -36,7 +37,10 @@ import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.apache.commons.collections4.CollectionUtils.*;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-
+/**
+ * Component responsible for importing posts based on scheduled subscriptions.
+ * This class coordinates the import process for various subscriptions and handles error processing.
+ */
 @Slf4j
 @Component
 public class PostImporter {
@@ -51,15 +55,19 @@ public class PostImporter {
     SubscriptionMetricsDao subscriptionMetricsDao;
 
     @Autowired
-    private BlockingQueue<Throwable> errorQueue;
+    BlockingQueue<Throwable> errorQueue;
 
     @Autowired
     List<Importer> importers;
 
     private ExecutorService importerThreadPool;
 
+    /**
+     * Initializes the PostImporter after construction.
+     * It sets up the importer thread pool based on available processors.
+     */
     @PostConstruct
-    public void postConstruct() {
+    protected void postConstruct() {
         log.info("Importers constructed, importerCt={}", size(importers));
         //
         // setup the importer thread pool
@@ -71,6 +79,12 @@ public class PostImporter {
         this.importerThreadPool = newFixedThreadPool(processorCt, new ThreadFactoryBuilder().setNameFormat("post-importer-%d").build());
     }
 
+
+    /**
+     * Checks the health of the importer.
+     *
+     * @return Health status of the importer.
+     */
     @SuppressWarnings("unused")
     public Health health() {
         boolean importerPoolIsShutdown = this.importerThreadPool.isShutdown();
@@ -84,6 +98,9 @@ public class PostImporter {
         }
     }
 
+    /**
+     * Initiates the post import process.
+     */
     @SuppressWarnings("unused")
     public void doImport() {
         try {
@@ -108,12 +125,29 @@ public class PostImporter {
                 .orElse(false);
     }
 
-    public void doImport(List<SubscriptionDefinition> subscriptionDefinitions) throws DataAccessException, DataUpdateException {
+    /**
+     * Initiates the post import process for a given list of subscription definitions.
+     *
+     * @param subscriptionDefinitions List of subscription definitions to import.
+     * @throws DataAccessException  If there is an issue accessing the data.
+     * @throws DataUpdateException  If there is an issue updating the data.
+     * @throws DataConflictException If there is a duplicate key.
+     */
+    public void doImport(List<SubscriptionDefinition> subscriptionDefinitions) throws DataAccessException, DataUpdateException, DataConflictException {
         doImport(subscriptionDefinitions, Map.of());
     }
 
+    /**
+     * Initiates the post import process for a given list of subscription definitions and a cache of feed discovery information.
+     *
+     * @param allSubscriptionDefinitions List of all subscription definitions to import.
+     * @param discoveryCache             Cache of feed discovery information.
+     * @throws DataAccessException  If there is an issue accessing the data.
+     * @throws DataUpdateException  If there is an issue updating the data.
+     * @throws DataConflictException If there is a duplicate key.
+     */
     @SuppressWarnings("unused")
-    public void doImport(List<SubscriptionDefinition> allSubscriptionDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException {
+    public void doImport(List<SubscriptionDefinition> allSubscriptionDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException, DataConflictException {
         if (isEmpty(allSubscriptionDefinitions)) {
             log.info("No subscriptions defined, terminating the import process early.");
             return;
@@ -167,8 +201,16 @@ public class PostImporter {
         }
     }
 
+    /**
+     * Processes the import results, including persisting staging posts and query metrics.
+     *
+     * @param importResults List of import results.
+     * @throws DataAccessException  If there is an issue accessing the data.
+     * @throws DataUpdateException  If there is an issue updating the data.
+     * @throws DataConflictException If there is a duplicate key.
+     */
     @SuppressWarnings("unused")
-    public void processImportResults(List<ImportResult> importResults) throws DataAccessException, DataUpdateException {
+    public void processImportResults(List<ImportResult> importResults) throws DataAccessException, DataUpdateException, DataConflictException {
         Map<Long, Set<StagingPost>> importSetByQueryId = new HashMap<>();
         for (ImportResult importResult : importResults) {
             ImmutableSet<StagingPost> importSet = ImmutableSet.copyOf(importResult.getImportSet());
@@ -187,13 +229,16 @@ public class PostImporter {
         }
     }
 
+    /**
+     * Enumeration representing possible resolutions for staging posts.
+     */
     enum StagingPostResolution {
         PERSISTED,
         ARCHIVED,
         SKIP_ALREADY_EXISTS,
     }
 
-    private void processQueryImportSet(SubscriptionMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException {
+    private void processQueryImportSet(SubscriptionMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException, DataConflictException {
         int persistCt = 0;
         int skipCt = 0;
         int archiveCt = 0;
@@ -210,7 +255,7 @@ public class PostImporter {
         processQueryMetrics(queryMetrics, persistCt, skipCt, archiveCt);
     }
 
-    private StagingPostResolution processStagingPost(StagingPost stagingPost) throws DataAccessException, DataUpdateException {
+    private StagingPostResolution processStagingPost(StagingPost stagingPost) throws DataAccessException, DataUpdateException, DataConflictException {
         // compute a hash of the post, attempt to find it in the data source;
         if (find(stagingPost)) {
             // log if present,
@@ -249,7 +294,7 @@ public class PostImporter {
         log.debug("Skipping staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
     }
 
-    private void persistStagingPost(StagingPost stagingPost, boolean doArchive) throws DataAccessException, DataUpdateException {
+    private void persistStagingPost(StagingPost stagingPost, boolean doArchive) throws DataAccessException, DataUpdateException, DataConflictException {
         log.debug("Persisting staging post from importerDesc={}, hash={}, doArchive={}", stagingPost.getImporterDesc(), stagingPost.getPostHash(), doArchive);
         if (doArchive) {
             stagingPost.setPostPubStatus(PostPubStatus.ARCHIVED);

@@ -24,6 +24,10 @@ import static java.util.Optional.of;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 import static org.apache.commons.collections4.CollectionUtils.size;
 
+/**
+ * Component responsible for updating import schedules of active subscriptions based on historical import metrics.
+ * It evaluates the performance of subscriptions and adjusts their import schedules accordingly.
+ */
 @Slf4j
 @Component
 public class ImportScheduler {
@@ -78,11 +82,19 @@ public class ImportScheduler {
     @Autowired
     SubscriptionMetricsDao subscriptionMetricsDao;
 
+    /**
+     * Initializes the ImportScheduler after construction.
+     * Logs an informational message to indicate the scheduler has been constructed.
+     */
     @PostConstruct
-    public void postConstruct() {
+    protected void postConstruct() {
         log.info("Scheduler constructed");
     }
 
+    /**
+     * Updates the import schedules of active subscriptions based on historical import metrics.
+     * Evaluates subscription performance and adjusts import schedules accordingly.
+     */
     @SuppressWarnings("unused")
     public void update() {
         try {

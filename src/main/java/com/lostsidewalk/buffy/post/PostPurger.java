@@ -1,6 +1,7 @@
 package com.lostsidewalk.buffy.post;
 
 import com.lostsidewalk.buffy.DataAccessException;
+import com.lostsidewalk.buffy.DataConflictException;
 import com.lostsidewalk.buffy.DataUpdateException;
 import com.lostsidewalk.buffy.queue.QueueDefinitionDao;
 import com.lostsidewalk.buffy.subscription.SubscriptionMetricsDao;
@@ -12,6 +13,10 @@ import javax.annotation.PostConstruct;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Component responsible for purging archived posts, marking idle posts for archival,
+ * and purging deleted queues and orphaned query metrics based on configured properties.
+ */
 @Slf4j
 @Component
 public class PostPurger {
@@ -28,11 +33,22 @@ public class PostPurger {
     @Autowired
     PostPurgerConfigProps configProps;
 
+    /**
+     * Initializes the PostPurger after construction.
+     * Logs an informational message to indicate the purger has been constructed.
+     */
     @PostConstruct
-    public void postConstruct() {
+    protected void postConstruct() {
         log.info("Purger constructed");
     }
 
+    /**
+     * Purges archived staging posts based on the maximum post age configuration.
+     *
+     * @return The number of purged archived posts.
+     * @throws DataAccessException If there is an issue accessing the data.
+     * @throws DataUpdateException If there is an issue updating the data.
+     */
     @SuppressWarnings("unused")
     public int purgeArchivedPosts() throws DataAccessException, DataUpdateException {
         log.debug("Purging ARCHIVED staging posts, params={}", this.configProps);
@@ -40,12 +56,11 @@ public class PostPurger {
     }
 
     /**
-     * posts that are READ and were imported GT max read age days ago -> ARCHIVED
-     * posts that are UNREAD and were imported GT max unread age days ago -> ARCHIVED
+     * Marks idle posts for archival based on configured maximum unread and read ages.
      *
-     * @return
-     * @throws DataAccessException
-     * @throws DataUpdateException
+     * @return The number of marked idle posts for archival.
+     * @throws DataAccessException If there is an issue accessing the data.
+     * @throws DataUpdateException If there is an issue updating the data.
      */
     @SuppressWarnings("unused")
     public long markIdlePostsForArchive() throws DataAccessException, DataUpdateException {
@@ -58,12 +73,26 @@ public class PostPurger {
         return ct;
     }
 
+    /**
+     * Purges deleted queues.
+     *
+     * @return The number of purged deleted queues.
+     * @throws DataAccessException If there is an issue accessing the data.
+     * @throws DataUpdateException If there is an issue updating the data.
+     */
     @SuppressWarnings("unused")
     public long purgeDeletedQueues() throws DataAccessException, DataUpdateException {
         log.debug("Purging DELETED queues, params={}", this.configProps);
         return queueDefinitionDao.purgeDeleted();
     }
 
+    /**
+     * Purges orphaned query metrics.
+     *
+     * @return The number of purged orphaned query metrics.
+     * @throws DataAccessException If there is an issue accessing the data.
+     * @throws DataUpdateException If there is an issue updating the data.
+     */
     @SuppressWarnings("unused")
     public long purgeOrphanedQueryMetrics() throws DataAccessException, DataUpdateException {
         log.debug("Purging ORPHANED query metrics, params={}", this.configProps);
