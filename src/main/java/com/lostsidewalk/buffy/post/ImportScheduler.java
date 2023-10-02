@@ -83,6 +83,13 @@ public class ImportScheduler {
     SubscriptionMetricsDao subscriptionMetricsDao;
 
     /**
+     * Default constructor; initializes the object.
+     */
+    ImportScheduler() {
+        super();
+    }
+
+    /**
      * Initializes the ImportScheduler after construction.
      * Logs an informational message to indicate the scheduler has been constructed.
      */

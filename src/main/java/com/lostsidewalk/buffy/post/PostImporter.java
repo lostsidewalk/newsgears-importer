@@ -63,6 +63,13 @@ public class PostImporter {
     private ExecutorService importerThreadPool;
 
     /**
+     * Default constructor; initializes the object.
+     */
+    PostImporter() {
+        super();
+    }
+
+    /**
      * Initializes the PostImporter after construction.
      * It sets up the importer thread pool based on available processors.
      */

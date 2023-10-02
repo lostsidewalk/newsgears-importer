@@ -34,6 +34,13 @@ public class PostPurger {
     PostPurgerConfigProps configProps;
 
     /**
+     * Default constructor; initializes the object.
+     */
+    PostPurger() {
+        super();
+    }
+
+    /**
      * Initializes the PostPurger after construction.
      * Logs an informational message to indicate the purger has been constructed.
      */

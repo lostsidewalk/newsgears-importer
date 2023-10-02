@@ -21,6 +21,13 @@ public class ImportQueueConfig {
     private final BlockingQueue<Throwable> errorQueue = new LinkedBlockingQueue<>();
 
     /**
+     * Default constructor; initializes the object.
+     */
+    ImportQueueConfig() {
+       super();
+    }
+
+    /**
      * Creates a bean for the article queue.
      *
      * @return The article queue bean.

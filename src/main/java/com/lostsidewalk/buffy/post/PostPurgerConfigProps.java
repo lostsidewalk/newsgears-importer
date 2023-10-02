@@ -19,6 +19,13 @@ public class PostPurgerConfigProps {
     int maxPostAge;
 
     /**
+     * Default constructor; initializes the object.
+     */
+    PostPurgerConfigProps() {
+        super();
+    }
+
+    /**
      * Maximum age (in days) for purging unread posts.
      *
      * @return The maximum age for purging unread posts.
