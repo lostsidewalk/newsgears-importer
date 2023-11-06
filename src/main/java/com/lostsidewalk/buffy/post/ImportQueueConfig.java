@@ -24,7 +24,6 @@ public class ImportQueueConfig {
      * Default constructor; initializes the object.
      */
     ImportQueueConfig() {
-       super();
     }
 
     /**
@@ -32,9 +31,10 @@ public class ImportQueueConfig {
      *
      * @return The article queue bean.
      */
+    @SuppressWarnings("DesignForExtension")
     @Bean
     public BlockingQueue<StagingPost> articleQueue() {
-        return this.articleQueue;
+        return articleQueue;
     }
 
     /**
@@ -42,8 +42,17 @@ public class ImportQueueConfig {
      *
      * @return The error queue bean.
      */
+    @SuppressWarnings("DesignForExtension")
     @Bean
     public BlockingQueue<Throwable> errorQueue() {
-        return this.errorQueue;
+        return errorQueue;
+    }
+
+    @Override
+    public final String toString() {
+        return "ImportQueueConfig{" +
+                "articleQueue=" + articleQueue +
+                ", errorQueue=" + errorQueue +
+                '}';
     }
 }

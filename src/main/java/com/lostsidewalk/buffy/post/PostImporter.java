@@ -9,7 +9,6 @@ import com.lostsidewalk.buffy.DataUpdateException;
 import com.lostsidewalk.buffy.discovery.FeedDiscoveryInfo;
 import com.lostsidewalk.buffy.importer.Importer;
 import com.lostsidewalk.buffy.importer.Importer.ImportResult;
-import com.lostsidewalk.buffy.post.StagingPost.PostPubStatus;
 import com.lostsidewalk.buffy.subscription.SubscriptionDefinition;
 import com.lostsidewalk.buffy.subscription.SubscriptionDefinitionDao;
 import com.lostsidewalk.buffy.subscription.SubscriptionMetrics;
@@ -27,7 +26,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 
 import static com.google.common.collect.ImmutableList.copyOf;
-import static com.lostsidewalk.buffy.post.ImportScheduler.ImportSchedule.scheduleNamed;
+import static com.lostsidewalk.buffy.post.ImportScheduler.ImportSchedule.importScheduleNamed;
 import static com.lostsidewalk.buffy.post.PostImporter.StagingPostResolution.*;
 import static java.lang.Math.min;
 import static java.lang.Runtime.getRuntime;
@@ -66,7 +65,6 @@ public class PostImporter {
      * Default constructor; initializes the object.
      */
     PostImporter() {
-        super();
     }
 
     /**
@@ -74,7 +72,7 @@ public class PostImporter {
      * It sets up the importer thread pool based on available processors.
      */
     @PostConstruct
-    protected void postConstruct() {
+    protected final void postConstruct() {
         log.info("Importers constructed, importerCt={}", size(importers));
         //
         // setup the importer thread pool
@@ -83,7 +81,7 @@ public class PostImporter {
         int processorCt = availableProcessors > 1 ? min(size(importers), availableProcessors - 1) : availableProcessors;
         processorCt = processorCt >= 2 ? processorCt - 1 : processorCt; // account for the import processor thread
         log.info("Starting importer thread pool: processCount={}", processorCt);
-        this.importerThreadPool = newFixedThreadPool(processorCt, new ThreadFactoryBuilder().setNameFormat("post-importer-%d").build());
+        importerThreadPool = newFixedThreadPool(processorCt, new ThreadFactoryBuilder().setNameFormat("post-importer-%d").build());
     }
 
 
@@ -93,15 +91,15 @@ public class PostImporter {
      * @return Health status of the importer.
      */
     @SuppressWarnings("unused")
-    public Health health() {
-        boolean importerPoolIsShutdown = this.importerThreadPool.isShutdown();
+    public final Health health() {
+        boolean importerPoolIsShutdown = importerThreadPool.isShutdown();
 
-        if (!importerPoolIsShutdown) {
-            return Health.up().build();
-        } else {
+        if (importerPoolIsShutdown) {
             return Health.down()
                     .withDetail("importerPoolIsShutdown", false)
                     .build();
+        } else {
+            return Health.up().build();
         }
     }
 
@@ -109,11 +107,11 @@ public class PostImporter {
      * Initiates the post import process.
      */
     @SuppressWarnings("unused")
-    public void doImport() {
+    public final void doImport() {
         try {
             List<SubscriptionDefinition> scheduledSubscriptions = getScheduledSubscriptions();
             doImport(scheduledSubscriptions);
-        } catch (Exception e) {
+        } catch (DataAccessException | DataUpdateException | DataConflictException | RuntimeException e) {
             log.error("Something horrible happened while during the scheduled import: {}", e.getMessage(), e);
         }
     }
@@ -123,12 +121,12 @@ public class PostImporter {
         return subscriptionDefinitionDao.findAllActive().stream().filter(qd -> scheduleMatches(qd.getImportSchedule(), now)).toList();
     }
 
-    private boolean scheduleMatches(String schedule, LocalDateTime localDateTime) {
+    private static boolean scheduleMatches(String schedule, LocalDateTime localDateTime) {
         if (isBlank(schedule)) {
             return false;
         }
-        return scheduleNamed(schedule)
-                .map(s -> s.matches(localDateTime))
+        return importScheduleNamed(schedule)
+                .map(importSchedule -> importSchedule.matches(localDateTime))
                 .orElse(false);
     }
 
@@ -140,7 +138,7 @@ public class PostImporter {
      * @throws DataUpdateException  If there is an issue updating the data.
      * @throws DataConflictException If there is a duplicate key.
      */
-    public void doImport(List<SubscriptionDefinition> subscriptionDefinitions) throws DataAccessException, DataUpdateException, DataConflictException {
+    public final void doImport(List<SubscriptionDefinition> subscriptionDefinitions) throws DataAccessException, DataUpdateException, DataConflictException {
         doImport(subscriptionDefinitions, Map.of());
     }
 
@@ -154,7 +152,7 @@ public class PostImporter {
      * @throws DataConflictException If there is a duplicate key.
      */
     @SuppressWarnings("unused")
-    public void doImport(List<SubscriptionDefinition> allSubscriptionDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException, DataConflictException {
+    public final void doImport(List<SubscriptionDefinition> allSubscriptionDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException, DataConflictException {
         if (isEmpty(allSubscriptionDefinitions)) {
             log.info("No subscriptions defined, terminating the import process early.");
             return;
@@ -181,7 +179,7 @@ public class PostImporter {
                 try {
                     ImportResult importResult = importer.doImport(queryBundle, discoveryCache);
                     allImportResults.add(importResult);
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     log.error("Something horrible happened on importerId={} due to: {}", importer.getImporterId(), e.getMessage(), e);
                 }
                 log.info("Completed importerId={} for all bundled subscriptions", importer.getImporterId());
@@ -217,12 +215,12 @@ public class PostImporter {
      * @throws DataConflictException If there is a duplicate key.
      */
     @SuppressWarnings("unused")
-    public void processImportResults(List<ImportResult> importResults) throws DataAccessException, DataUpdateException, DataConflictException {
-        Map<Long, Set<StagingPost>> importSetByQueryId = new HashMap<>();
+    public final void processImportResults(Iterable<? extends ImportResult> importResults) throws DataAccessException, DataUpdateException, DataConflictException {
+        Map<Long, Set<StagingPost>> importSetByQueryId = new HashMap<>(16);
         for (ImportResult importResult : importResults) {
             ImmutableSet<StagingPost> importSet = ImmutableSet.copyOf(importResult.getImportSet());
-            for (StagingPost s : importSet) {
-                importSetByQueryId.computeIfAbsent(s.getSubscriptionId(), v -> new HashSet<>()).add(s);
+            for (StagingPost stagingPost : importSet) {
+                importSetByQueryId.computeIfAbsent(stagingPost.getSubscriptionId(), v -> new HashSet<>(size(importSet))).add(stagingPost);
             }
         }
         for (ImportResult importResult : importResults) {
@@ -245,7 +243,7 @@ public class PostImporter {
         SKIP_ALREADY_EXISTS,
     }
 
-    private void processQueryImportSet(SubscriptionMetrics queryMetrics, Set<StagingPost> importSet) throws DataAccessException, DataUpdateException, DataConflictException {
+    private void processQueryImportSet(SubscriptionMetrics queryMetrics, Iterable<? extends StagingPost> importSet) throws DataAccessException, DataUpdateException, DataConflictException {
         int persistCt = 0;
         int skipCt = 0;
         int archiveCt = 0;
@@ -293,18 +291,18 @@ public class PostImporter {
         return stagingPostDao.checkExists(stagingPost.getPostHash());
     }
 
-    private void logAlreadyExists(StagingPost stagingPost) {
+    private static void logAlreadyExists(StagingPost stagingPost) {
         log.debug("Staging post already exists, hash={}", stagingPost.getPostHash());
     }
 
-    private void logSkipImport(StagingPost stagingPost) {
+    private static void logSkipImport(StagingPost stagingPost) {
         log.debug("Skipping staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
     }
 
     private void persistStagingPost(StagingPost stagingPost, boolean doArchive) throws DataAccessException, DataUpdateException, DataConflictException {
         log.debug("Persisting staging post from importerDesc={}, hash={}, doArchive={}", stagingPost.getImporterDesc(), stagingPost.getPostHash(), doArchive);
         if (doArchive) {
-            stagingPost.setPostPubStatus(PostPubStatus.ARCHIVED);
+            stagingPost.setArchived(true);
         }
         stagingPostDao.add(stagingPost);
     }
@@ -322,12 +320,24 @@ public class PostImporter {
     //
     private void processErrors() {
         log.info("Processing {} import errors", size(errorQueue));
-        List<Throwable> errorList = new ArrayList<>(errorQueue.size());
+        Collection<Throwable> errorList = new ArrayList<>(errorQueue.size());
         errorQueue.drainTo(errorList);
-        errorList.forEach(this::logFailure);
+        errorList.forEach(PostImporter::logFailure);
     }
 
-    private void logFailure(Throwable t) {
+    private static void logFailure(Throwable t) {
         log.error("Import error={}", t.getMessage());
+    }
+
+    @Override
+    public final String toString() {
+        return "PostImporter{" +
+                "stagingPostDao=" + stagingPostDao +
+                ", subscriptionDefinitionDao=" + subscriptionDefinitionDao +
+                ", subscriptionMetricsDao=" + subscriptionMetricsDao +
+                ", errorQueue=" + errorQueue +
+                ", importers=" + importers +
+                ", importerThreadPool=" + importerThreadPool +
+                '}';
     }
 }

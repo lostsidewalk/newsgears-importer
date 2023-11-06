@@ -1,7 +1,6 @@
 package com.lostsidewalk.buffy.post;
 
 import com.lostsidewalk.buffy.DataAccessException;
-import com.lostsidewalk.buffy.DataConflictException;
 import com.lostsidewalk.buffy.DataUpdateException;
 import com.lostsidewalk.buffy.queue.QueueDefinitionDao;
 import com.lostsidewalk.buffy.subscription.SubscriptionMetricsDao;
@@ -10,8 +9,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
-import java.util.List;
-import java.util.Map;
 
 /**
  * Component responsible for purging archived posts, marking idle posts for archival,
@@ -37,7 +34,6 @@ public class PostPurger {
      * Default constructor; initializes the object.
      */
     PostPurger() {
-        super();
     }
 
     /**
@@ -45,7 +41,7 @@ public class PostPurger {
      * Logs an informational message to indicate the purger has been constructed.
      */
     @PostConstruct
-    protected void postConstruct() {
+    protected static void postConstruct() {
         log.info("Purger constructed");
     }
 
@@ -54,30 +50,23 @@ public class PostPurger {
      *
      * @return The number of purged archived posts.
      * @throws DataAccessException If there is an issue accessing the data.
-     * @throws DataUpdateException If there is an issue updating the data.
      */
     @SuppressWarnings("unused")
-    public int purgeArchivedPosts() throws DataAccessException, DataUpdateException {
-        log.debug("Purging ARCHIVED staging posts, params={}", this.configProps);
-        return stagingPostDao.purgeArchivedPosts(this.configProps.getMaxPostAge());
+    public final int purgeArchivedPosts() throws DataAccessException {
+        log.debug("Purging ARCHIVED staging posts");
+        return stagingPostDao.purgeArchivedPosts();
     }
 
     /**
      * Marks idle posts for archival based on configured maximum unread and read ages.
      *
      * @return The number of marked idle posts for archival.
-     * @throws DataAccessException If there is an issue accessing the data.
      * @throws DataUpdateException If there is an issue updating the data.
      */
     @SuppressWarnings("unused")
-    public long markIdlePostsForArchive() throws DataAccessException, DataUpdateException {
-        log.debug("Marking idle posts for archival, params={}", this.configProps);
-        Map<String, List<Long>> idleStagingPosts = stagingPostDao.findAllIdle(configProps.getMaxUnreadAge(), configProps.getMaxReadAge());
-        int ct = 0;
-        for (Map.Entry<String, List<Long>> e : idleStagingPosts.entrySet()) {
-            ct += stagingPostDao.archiveByIds(e.getKey(), e.getValue());
-        }
-        return ct;
+    public final long markIdlePostsForArchive() throws DataUpdateException {
+        log.debug("Marking idle posts for archival, params={}", configProps);
+        return stagingPostDao.markIdlePostsForArchive(configProps.getMaxUnreadAge(), configProps.getMaxReadAge());
     }
 
     /**
@@ -85,11 +74,10 @@ public class PostPurger {
      *
      * @return The number of purged deleted queues.
      * @throws DataAccessException If there is an issue accessing the data.
-     * @throws DataUpdateException If there is an issue updating the data.
      */
     @SuppressWarnings("unused")
-    public long purgeDeletedQueues() throws DataAccessException, DataUpdateException {
-        log.debug("Purging DELETED queues, params={}", this.configProps);
+    public final long purgeDeletedQueues() throws DataAccessException {
+        log.debug("Purging DELETED queues, params={}", configProps);
         return queueDefinitionDao.purgeDeleted();
     }
 
@@ -98,11 +86,20 @@ public class PostPurger {
      *
      * @return The number of purged orphaned query metrics.
      * @throws DataAccessException If there is an issue accessing the data.
-     * @throws DataUpdateException If there is an issue updating the data.
      */
     @SuppressWarnings("unused")
-    public long purgeOrphanedQueryMetrics() throws DataAccessException, DataUpdateException {
-        log.debug("Purging ORPHANED query metrics, params={}", this.configProps);
+    public final long purgeOrphanedQueryMetrics() throws DataAccessException {
+        log.debug("Purging ORPHANED query metrics, params={}", configProps);
         return subscriptionMetricsDao.purgeOrphaned();
+    }
+
+    @Override
+    public final String toString() {
+        return "PostPurger{" +
+                "stagingPostDao=" + stagingPostDao +
+                ", subscriptionMetricsDao=" + subscriptionMetricsDao +
+                ", queueDefinitionDao=" + queueDefinitionDao +
+                ", configProps=" + configProps +
+                '}';
     }
 }

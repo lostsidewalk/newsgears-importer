@@ -1,5 +1,6 @@
 package com.lostsidewalk.buffy.post;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -8,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
  * Configuration properties class for configuring post purging settings.
  * This class is used to specify age limits for purging unread, read, and all posts.
  */
+@Slf4j
 @Configuration
 @ConfigurationProperties("post.purger")
 public class PostPurgerConfigProps {
@@ -22,7 +24,6 @@ public class PostPurgerConfigProps {
      * Default constructor; initializes the object.
      */
     PostPurgerConfigProps() {
-        super();
     }
 
     /**
@@ -30,7 +31,7 @@ public class PostPurgerConfigProps {
      *
      * @return The maximum age for purging unread posts.
      */
-    public int getMaxUnreadAge() {
+    public final int getMaxUnreadAge() {
         return maxUnreadAge;
     }
 
@@ -40,7 +41,7 @@ public class PostPurgerConfigProps {
      * @param maxUnreadAge The maximum age for purging unread posts.
      */
     @SuppressWarnings("unused")
-    public void setMaxUnreadAge(int maxUnreadAge) {
+    public final void setMaxUnreadAge(int maxUnreadAge) {
         this.maxUnreadAge = maxUnreadAge;
     }
 
@@ -49,7 +50,7 @@ public class PostPurgerConfigProps {
      *
      * @return The maximum age for purging read posts.
      */
-    public int getMaxReadAge() {
+    public final int getMaxReadAge() {
         return maxReadAge;
     }
 
@@ -59,7 +60,7 @@ public class PostPurgerConfigProps {
      * @param maxReadAge The maximum age for purging read posts.
      */
     @SuppressWarnings("unused")
-    public void setMaxReadAge(int maxReadAge) {
+    public final void setMaxReadAge(int maxReadAge) {
         this.maxReadAge = maxReadAge;
     }
 
@@ -68,7 +69,7 @@ public class PostPurgerConfigProps {
      *
      * @return The maximum age for purging all posts.
      */
-    public int getMaxPostAge() {
+    public final int getMaxPostAge() {
         return maxPostAge;
     }
 
@@ -78,7 +79,16 @@ public class PostPurgerConfigProps {
      * @param maxPostAge The maximum age for purging all posts.
      */
     @SuppressWarnings("unused")
-    public void setMaxPostAge(int maxPostAge) {
+    public final void setMaxPostAge(int maxPostAge) {
         this.maxPostAge = maxPostAge;
+    }
+
+    @Override
+    public final String toString() {
+        return "PostPurgerConfigProps{" +
+                "maxUnreadAge=" + maxUnreadAge +
+                ", maxReadAge=" + maxReadAge +
+                ", maxPostAge=" + maxPostAge +
+                '}';
     }
 }

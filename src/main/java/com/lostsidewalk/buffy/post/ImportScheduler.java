@@ -1,5 +1,6 @@
 package com.lostsidewalk.buffy.post;
 
+import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.subscription.SubscriptionDefinition;
 import com.lostsidewalk.buffy.subscription.SubscriptionDefinitionDao;
 import com.lostsidewalk.buffy.subscription.SubscriptionMetrics;
@@ -16,7 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 
-import static com.lostsidewalk.buffy.post.ImportScheduler.ImportSchedule.scheduleNamed;
+import static com.lostsidewalk.buffy.post.ImportScheduler.ImportSchedule.importScheduleNamed;
 import static java.lang.Integer.MAX_VALUE;
 import static java.util.Comparator.comparing;
 import static java.util.Optional.empty;
@@ -44,16 +45,16 @@ public class ImportScheduler {
 
         final String name;
         final int maxMisses;
-        final Function<LocalDateTime, Boolean> predicate;
+        final Function<? super LocalDateTime, Boolean> predicate;
 
-        ImportSchedule(String name, int maxMisses, Function<LocalDateTime, Boolean> predicate) {
+        ImportSchedule(String name, int maxMisses, Function<? super LocalDateTime, Boolean> predicate) {
             this.name = name;
             this.maxMisses = maxMisses;
             this.predicate = predicate;
         }
 
         boolean matches(LocalDateTime localDateTime) {
-            return this.predicate.apply(localDateTime);
+            return predicate.apply(localDateTime);
         }
 
         ImportSchedule downgrade() {
@@ -66,13 +67,22 @@ public class ImportScheduler {
             return D;
         }
 
-        static Optional<ImportSchedule> scheduleNamed(String name) {
-            for (ImportSchedule i : values()) {
-                if (StringUtils.equals(i.name, name)) {
-                    return of(i);
+        static Optional<ImportSchedule> importScheduleNamed(String name) {
+            for (ImportSchedule importSchedule : values()) {
+                if (StringUtils.equals(importSchedule.name, name)) {
+                    return of(importSchedule);
                 }
             }
             return empty();
+        }
+
+        @Override
+        public final String toString() {
+            return "ImportSchedule{" +
+                    "name='" + name + '\'' +
+                    ", maxMisses=" + maxMisses +
+                    ", predicate=" + predicate +
+                    '}';
         }
     }
 
@@ -86,7 +96,6 @@ public class ImportScheduler {
      * Default constructor; initializes the object.
      */
     ImportScheduler() {
-        super();
     }
 
     /**
@@ -94,7 +103,7 @@ public class ImportScheduler {
      * Logs an informational message to indicate the scheduler has been constructed.
      */
     @PostConstruct
-    protected void postConstruct() {
+    protected static void postConstruct() {
         log.info("Scheduler constructed");
     }
 
@@ -103,12 +112,12 @@ public class ImportScheduler {
      * Evaluates subscription performance and adjusts import schedules accordingly.
      */
     @SuppressWarnings("unused")
-    public void update() {
+    public final void update() {
         try {
             List<SubscriptionDefinition> allActiveSubscriptions = subscriptionDefinitionDao.findAllActive();
-            List<Object[]> updates = new ArrayList<>();
+            List<Object[]> updates = new ArrayList<>(size(allActiveSubscriptions));
             for (SubscriptionDefinition q : allActiveSubscriptions) {
-                ImportSchedule currentSchedule = ImportSchedule.scheduleNamed(q.getImportSchedule()).orElse(null);
+                ImportSchedule currentSchedule = importScheduleNamed(q.getImportSchedule()).orElse(null);
                 List<SubscriptionMetrics> subscriptionMetrics = subscriptionMetricsDao.findBySubscriptionId(q.getUsername(), q.getId());
                 ImportSchedule newSchedule = reschedule(q.getId(), currentSchedule, subscriptionMetrics);
                 if (newSchedule != null) {
@@ -118,12 +127,12 @@ public class ImportScheduler {
             if (isNotEmpty(updates)) {
                 subscriptionDefinitionDao.updateImportSchedules(updates);
             }
-        } catch (Exception e) {
+        } catch (DataAccessException | RuntimeException e) {
             log.error("Something horrible happened while during the import schedule update: {}", e.getMessage(), e);
         }
     }
 
-    private ImportSchedule reschedule(Long subscriptionId, ImportSchedule targetSchedule, List<SubscriptionMetrics> subscriptionMetrics) {
+    private static ImportSchedule reschedule(Long subscriptionId, ImportSchedule targetSchedule, List<? extends SubscriptionMetrics> subscriptionMetrics) {
         // sort subscription metrics by most recent
         subscriptionMetrics.sort(comparing(SubscriptionMetrics::getImportTimestamp).reversed());
         int importMisses = 0;
@@ -131,7 +140,7 @@ public class ImportScheduler {
         for (SubscriptionMetrics qm : subscriptionMetrics) {
             if (qm.getImportCt() != null && qm.getErrorType() == null) {
                 Integer persistCt = qm.getPersistCt();
-                ImportSchedule schedule = scheduleNamed(qm.getImportSchedule()).orElse(null);
+                ImportSchedule schedule = importScheduleNamed(qm.getImportSchedule()).orElse(null);
                 boolean scheduleMatches = schedule == targetSchedule;
                 if (persistCt == 0 && scheduleMatches) {
                     importMisses++;
@@ -152,5 +161,13 @@ public class ImportScheduler {
         }
 
         return null;
+    }
+
+    @Override
+    public final String toString() {
+        return "ImportScheduler{" +
+                "subscriptionDefinitionDao=" + subscriptionDefinitionDao +
+                ", subscriptionMetricsDao=" + subscriptionMetricsDao +
+                '}';
     }
 }
