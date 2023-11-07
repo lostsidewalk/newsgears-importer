@@ -24,6 +24,7 @@ import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import static com.google.common.collect.ImmutableList.copyOf;
 import static com.lostsidewalk.buffy.post.ImportScheduler.ImportSchedule.importScheduleNamed;
@@ -54,10 +55,9 @@ public class PostImporter {
     SubscriptionMetricsDao subscriptionMetricsDao;
 
     @Autowired
-    BlockingQueue<Throwable> errorQueue;
-
-    @Autowired
     List<Importer> importers;
+
+    private final BlockingQueue<Throwable> errorQueue = new LinkedBlockingQueue<>();
 
     private ExecutorService importerThreadPool;
 
