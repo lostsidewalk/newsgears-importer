@@ -1,7 +1,6 @@
 package com.lostsidewalk.buffy.post;
 
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.lostsidewalk.buffy.DataAccessException;
 import com.lostsidewalk.buffy.DataConflictException;
@@ -9,6 +8,9 @@ import com.lostsidewalk.buffy.DataUpdateException;
 import com.lostsidewalk.buffy.discovery.FeedDiscoveryInfo;
 import com.lostsidewalk.buffy.importer.Importer;
 import com.lostsidewalk.buffy.importer.Importer.ImportResult;
+import com.lostsidewalk.buffy.rule.RuleSet;
+import com.lostsidewalk.buffy.rule.RuleSetDao;
+import com.lostsidewalk.buffy.rule.RuleSetExecutor;
 import com.lostsidewalk.buffy.subscription.SubscriptionDefinition;
 import com.lostsidewalk.buffy.subscription.SubscriptionDefinitionDao;
 import com.lostsidewalk.buffy.subscription.SubscriptionMetrics;
@@ -27,11 +29,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import static com.google.common.collect.ImmutableList.copyOf;
+import static com.google.common.collect.Lists.partition;
 import static com.lostsidewalk.buffy.post.ImportScheduler.ImportSchedule.importScheduleNamed;
+import static com.lostsidewalk.buffy.post.PostArchiver.archive;
 import static com.lostsidewalk.buffy.post.PostImporter.StagingPostResolution.*;
 import static java.lang.Math.min;
 import static java.lang.Runtime.getRuntime;
-import static java.util.Calendar.DATE;
+import static java.util.Collections.emptyList;
 import static java.util.Collections.synchronizedList;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.apache.commons.collections4.CollectionUtils.*;
@@ -41,6 +45,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
  * Component responsible for importing posts based on scheduled subscriptions.
  * This class coordinates the import process for various subscriptions and handles error processing.
  */
+@SuppressWarnings("WeakerAccess")
 @Slf4j
 @Component
 public class PostImporter {
@@ -55,7 +60,16 @@ public class PostImporter {
     SubscriptionMetricsDao subscriptionMetricsDao;
 
     @Autowired
+    RuleSetDao ruleSetDao;
+
+    @Autowired
     List<Importer> importers;
+
+    @Autowired
+    RuleSetExecutor ruleSetExecutor;
+
+    @Autowired
+    PostArchiver postArchiver;
 
     private final BlockingQueue<Throwable> errorQueue = new LinkedBlockingQueue<>();
 
@@ -83,7 +97,6 @@ public class PostImporter {
         log.info("Starting importer thread pool: processCount={}", processorCt);
         importerThreadPool = newFixedThreadPool(processorCt, new ThreadFactoryBuilder().setNameFormat("post-importer-%d").build());
     }
-
 
     /**
      * Checks the health of the importer.
@@ -165,9 +178,9 @@ public class PostImporter {
         //
         // partition queries into chunks
         //
-        List<List<SubscriptionDefinition>> queryBundles = Lists.partition(allSubscriptionDefinitions, 100);
+        List<List<SubscriptionDefinition>> subscriptionBundles = partition(allSubscriptionDefinitions, 100);
         int bundleIdx = 1;
-        for (List<SubscriptionDefinition> queryBundle : queryBundles) {
+        for (List<SubscriptionDefinition> subscriptionBundle : subscriptionBundles) {
             //
             // run the importers to populate the article queue
             //
@@ -175,9 +188,9 @@ public class PostImporter {
             CountDownLatch latch = new CountDownLatch(size(importers));
             log.info("Starting import of bundle index {}", bundleIdx);
             importers.forEach(importer -> importerThreadPool.submit(() -> {
-                log.info("Starting importerId={} with {} bundled subscriptions", importer.getImporterId(), size(queryBundle));
+                log.info("Starting importerId={} with {} bundled subscriptions", importer.getImporterId(), size(subscriptionBundle));
                 try {
-                    ImportResult importResult = importer.doImport(queryBundle, discoveryCache);
+                    ImportResult importResult = importer.doImport(subscriptionBundle, discoveryCache);
                     allImportResults.add(importResult);
                 } catch (RuntimeException e) {
                     log.error("Something horrible happened on importerId={} due to: {}", importer.getImporterId(), e.getMessage(), e);
@@ -214,21 +227,45 @@ public class PostImporter {
      * @throws DataUpdateException  If there is an issue updating the data.
      * @throws DataConflictException If there is a duplicate key.
      */
-    @SuppressWarnings("unused")
+    @SuppressWarnings({"unused", "MethodWithMultipleLoops"})
     public final void processImportResults(Iterable<? extends ImportResult> importResults) throws DataAccessException, DataUpdateException, DataConflictException {
-        Map<Long, Set<StagingPost>> importSetByQueryId = new HashMap<>(16);
+        // subscription Id -> collection of newly imported staging posts
+        Map<Long, Set<StagingPost>> importSetBySubscriptionId = new HashMap<>(16);
+        // subscription Id -> rule set to execute on all newly imported staging posts in this subscription
+        Map<Long, List<RuleSet>> ruleSetsBySubscriptionId = new HashMap<>(16);
+        // (first pass, map up import sets and rule sets)
         for (ImportResult importResult : importResults) {
             ImmutableSet<StagingPost> importSet = ImmutableSet.copyOf(importResult.getImportSet());
             for (StagingPost stagingPost : importSet) {
-                importSetByQueryId.computeIfAbsent(stagingPost.getSubscriptionId(), v -> new HashSet<>(size(importSet))).add(stagingPost);
+                String username = stagingPost.getUsername();
+                long subscriptionId = stagingPost.getSubscriptionId();
+                long queueId = stagingPost.getQueueId();
+                // add to importSetBySubscriptionId
+                importSetBySubscriptionId.computeIfAbsent(
+                        subscriptionId,
+                        v -> new HashSet<>(size(importSet))
+                ).add(stagingPost);
+                // add to ruleSetsBySubscriptionId
+                if (!ruleSetsBySubscriptionId.containsKey(subscriptionId)) {
+                    List<RuleSet> ruleSets = ruleSetDao.findBySubscriptionId(username, subscriptionId);
+                    ruleSetsBySubscriptionId.put(subscriptionId, isNotEmpty(ruleSets) ? ruleSets : emptyList());
+                }
             }
         }
+        // (second pass, perform processing)
         for (ImportResult importResult : importResults) {
-            List<SubscriptionMetrics> queryMetrics = copyOf(importResult.getSubscriptionMetrics());
-            for (SubscriptionMetrics q : queryMetrics) {
-                Set<StagingPost> queryImportSet = importSetByQueryId.get(q.getSubscriptionId());
-                if (isNotEmpty(queryImportSet)) {
-                    processQueryImportSet(q, queryImportSet);
+            List<SubscriptionMetrics> subscriptionMetrics = copyOf(importResult.getSubscriptionMetrics());
+            for (SubscriptionMetrics subscriptionMetric : subscriptionMetrics) {
+                Set<StagingPost> subscriptionImportSet = importSetBySubscriptionId.get(subscriptionMetric.getSubscriptionId());
+                if (isNotEmpty(subscriptionImportSet)) {
+                    processSubscriptionImportSet(
+                            // metric
+                            subscriptionMetric,
+                            // import set
+                            subscriptionImportSet,
+                            // subscription rule sets
+                            ruleSetsBySubscriptionId.get(subscriptionMetric.getSubscriptionId())
+                    );
                 }
             }
         }
@@ -242,13 +279,17 @@ public class PostImporter {
         ARCHIVED,
         SKIP_ALREADY_EXISTS,
     }
-
-    private void processQueryImportSet(SubscriptionMetrics queryMetrics, Iterable<? extends StagingPost> importSet) throws DataAccessException, DataUpdateException, DataConflictException {
+    //
+    // import set processing
+    //
+    private void processSubscriptionImportSet(SubscriptionMetrics queryMetrics, Iterable<? extends StagingPost> importSet, List<? extends RuleSet> subscriptionRuleSets)
+            throws DataAccessException, DataUpdateException, DataConflictException
+    {
         int persistCt = 0;
         int skipCt = 0;
         int archiveCt = 0;
         for (StagingPost sp : importSet) {
-            StagingPostResolution resolution = processStagingPost(sp);
+            StagingPostResolution resolution = processStagingPost(sp, subscriptionRuleSets);
             if (resolution == PERSISTED) {
                 persistCt++;
             } else if (resolution == SKIP_ALREADY_EXISTS) {
@@ -257,57 +298,6 @@ public class PostImporter {
                 archiveCt++;
             }
         }
-        processQueryMetrics(queryMetrics, persistCt, skipCt, archiveCt);
-    }
-
-    private StagingPostResolution processStagingPost(StagingPost stagingPost) throws DataAccessException, DataUpdateException, DataConflictException {
-        // compute a hash of the post, attempt to find it in the data source;
-        if (find(stagingPost)) {
-            // log if present,
-            logAlreadyExists(stagingPost);
-            logSkipImport(stagingPost);
-            return SKIP_ALREADY_EXISTS;
-        } else {
-            Calendar cal = Calendar.getInstance();
-            cal.add(DATE, -90);
-            Date archiveDate = cal.getTime();
-            // archive criteria:
-            //
-            // (1) missing both publish timestamp and last updated timestamp (spam injected into the feed)
-            boolean hasTimestamp = (stagingPost.getPublishTimestamp() != null || stagingPost.getLastUpdatedTimestamp() != null);
-            // (2) published before the archive date without any updates
-            boolean publishedTooLongAgoNoUpdates = stagingPost.getLastUpdatedTimestamp() == null && stagingPost.getPublishTimestamp() != null && stagingPost.getPublishTimestamp().before(archiveDate);
-            // (3) most recent update is before the archive date
-            boolean mostRecentUpdateIsTooOld = stagingPost.getLastUpdatedTimestamp() != null && stagingPost.getLastUpdatedTimestamp().before(archiveDate);
-            boolean doArchive = (!hasTimestamp || publishedTooLongAgoNoUpdates || mostRecentUpdateIsTooOld);
-            persistStagingPost(stagingPost, doArchive);
-
-            return doArchive ? ARCHIVED : PERSISTED;
-        }
-    }
-
-    private boolean find(StagingPost stagingPost) throws DataAccessException {
-        log.debug("Attempting to locate staging post, hash={}", stagingPost.getPostHash());
-        return stagingPostDao.checkExists(stagingPost.getPostHash());
-    }
-
-    private static void logAlreadyExists(StagingPost stagingPost) {
-        log.debug("Staging post already exists, hash={}", stagingPost.getPostHash());
-    }
-
-    private static void logSkipImport(StagingPost stagingPost) {
-        log.debug("Skipping staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
-    }
-
-    private void persistStagingPost(StagingPost stagingPost, boolean doArchive) throws DataAccessException, DataUpdateException, DataConflictException {
-        log.debug("Persisting staging post from importerDesc={}, hash={}, doArchive={}", stagingPost.getImporterDesc(), stagingPost.getPostHash(), doArchive);
-        if (doArchive) {
-            stagingPost.setArchived(true);
-        }
-        stagingPostDao.add(stagingPost);
-    }
-
-    private void processQueryMetrics(SubscriptionMetrics queryMetrics, int persistCt, int skipCt, int archiveCt) throws DataAccessException, DataUpdateException {
         log.debug("Persisting query metrics: subscriptionId={}, importCt={}, importTimestamp={}, persistCt={}, skipCt={}, archiveCt={}",
                 queryMetrics.getSubscriptionId(), queryMetrics.getImportCt(), queryMetrics.getImportTimestamp(), persistCt, skipCt, archiveCt);
         queryMetrics.setPersistCt(persistCt);
@@ -316,17 +306,46 @@ public class PostImporter {
         subscriptionMetricsDao.add(queryMetrics);
     }
     //
+    // staging post processing
+    //
+    private StagingPostResolution processStagingPost(
+            StagingPost stagingPost,
+            @SuppressWarnings("TypeMayBeWeakened") List<? extends RuleSet> subscriptionRuleSets
+    ) throws DataAccessException, DataUpdateException, DataConflictException {
+        // compute a hash of the post, attempt to find it in the data source;
+        if (stagingPostDao.checkExists(stagingPost.getPostHash())) {
+            // log if present,
+            log.debug("Staging post already exists, hash={}", stagingPost.getPostHash());
+            log.debug("Skipping staging post from importerDesc={}, hash={}", stagingPost.getImporterDesc(), stagingPost.getPostHash());
+            return SKIP_ALREADY_EXISTS;
+        } else {
+            //
+            // rules engine
+            //
+            if (isNotEmpty(subscriptionRuleSets)) {
+                subscriptionRuleSets
+                        .forEach(r -> ruleSetExecutor.execute(r, stagingPost));
+            }
+            //
+            // archiver
+            //
+            boolean isArchived = archive(stagingPost);
+            //
+            // persister
+            //
+            stagingPostDao.add(stagingPost);
+
+            return isArchived ? ARCHIVED : PERSISTED;
+        }
+    }
+    //
     // import error processing
     //
     private void processErrors() {
         log.info("Processing {} import errors", size(errorQueue));
         Collection<Throwable> errorList = new ArrayList<>(errorQueue.size());
         errorQueue.drainTo(errorList);
-        errorList.forEach(PostImporter::logFailure);
-    }
-
-    private static void logFailure(Throwable t) {
-        log.error("Import error={}", t.getMessage());
+        errorList.forEach(t -> log.error("Import error={}", t.getMessage()));
     }
 
     @Override
@@ -335,8 +354,11 @@ public class PostImporter {
                 "stagingPostDao=" + stagingPostDao +
                 ", subscriptionDefinitionDao=" + subscriptionDefinitionDao +
                 ", subscriptionMetricsDao=" + subscriptionMetricsDao +
-                ", errorQueue=" + errorQueue +
+                ", ruleSetDao=" + ruleSetDao +
                 ", importers=" + importers +
+                ", ruleSetExecutor=" + ruleSetExecutor +
+                ", postArchiver=" + postArchiver +
+                ", errorQueue=" + errorQueue +
                 ", importerThreadPool=" + importerThreadPool +
                 '}';
     }
