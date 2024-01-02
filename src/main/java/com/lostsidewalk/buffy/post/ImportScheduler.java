@@ -153,11 +153,11 @@ public class ImportScheduler {
             // if the number of import misses for the current schedule is exceeded, downgrade
             // the subscription to the next lower schedule
             ImportSchedule newSchedule = targetSchedule.downgrade();
-            log.info("Downgrading import schedule for subscriptionId={}: oldSchedule={}, newSchedule={}, importMisses={} exceeds maxMisses={}",
+            log.debug("Downgrading import schedule for subscriptionId={}: oldSchedule={}, newSchedule={}, importMisses={} exceeds maxMisses={}",
                     subscriptionId, targetSchedule, newSchedule, importMisses, targetSchedule.maxMisses);
             return newSchedule;
         } else {
-            log.debug("Import miss count ({}) within max limit ({}) for this schedule ({})", importMisses, targetSchedule.maxMisses, targetSchedule.name);
+            log.trace("Import miss count ({}) within max limit ({}) for this schedule ({})", importMisses, targetSchedule.maxMisses, targetSchedule.name);
         }
 
         return null;

@@ -167,12 +167,12 @@ public class PostImporter {
     @SuppressWarnings("unused")
     public final void doImport(List<SubscriptionDefinition> allSubscriptionDefinitions, Map<String, FeedDiscoveryInfo> discoveryCache) throws DataAccessException, DataUpdateException, DataConflictException {
         if (isEmpty(allSubscriptionDefinitions)) {
-            log.info("No subscriptions defined, terminating the import process early.");
+            log.warn("No subscriptions defined, terminating the import process early.");
             return;
         }
 
         if (isEmpty(importers)) {
-            log.info("No importers defined, terminating the import process early.");
+            log.warn("No importers defined, terminating the import process early.");
             return;
         }
         //
@@ -342,7 +342,10 @@ public class PostImporter {
     // import error processing
     //
     private void processErrors() {
-        log.info("Processing {} import errors", size(errorQueue));
+        int errorCt = size(errorQueue);
+        if (errorCt > 0) {
+            log.warn("Processing {} import errors", errorCt);
+        }
         Collection<Throwable> errorList = new ArrayList<>(errorQueue.size());
         errorQueue.drainTo(errorList);
         errorList.forEach(t -> log.error("Import error={}", t.getMessage()));

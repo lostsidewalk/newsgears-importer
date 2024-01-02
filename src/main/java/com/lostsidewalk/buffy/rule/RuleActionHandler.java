@@ -116,8 +116,8 @@ public class RuleActionHandler {
     //
 
     private void invokeAction(long ruleId, StagingPost stagingPost, ActionType actionType, Object ... parameters) {
-        log.info("Invoking action, ruleId={}, stagingPostId={}, actionType={}, parameters={}",
-                ruleId, stagingPost.getId(), actionType, parameters);
+        log.info("Invoking action, ruleId={}, postHash={}, actionType={}, parameters={}",
+                ruleId, stagingPost.getPostHash(), actionType, parameters);
         switch (actionType) {
             case WEBHOOK -> webHookRequestQueue.add(new WebHookRequest(
                     // url

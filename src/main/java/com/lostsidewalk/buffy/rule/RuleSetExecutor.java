@@ -5,6 +5,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+
+import static org.apache.commons.collections4.CollectionUtils.isEmpty;
+
 /**
  * Component responsible for executing rules against staging posts.
  */
@@ -32,19 +36,24 @@ public class RuleSetExecutor {
      * @param stagingPost The staging post upon which to evaluate the given rules.
      */
     public final void execute(RuleSet ruleSet, StagingPost stagingPost) {
-        log.info("Executing ruleSetId={}, ruleSetName={}, stagingPostId={}, username={}",
-                ruleSet.getId(), ruleSet.getName(), stagingPost.getId(), stagingPost.getUsername());
         //
         // execute each rule in the rule set against the staging post
         //
-        ruleSet.getRules()
-                .forEach(rule -> execute(rule, stagingPost));
+        Set<Rule> rules = ruleSet.getRules();
+        if (isEmpty(rules)) {
+            log.warn("Skipping empty rule set: ruleSetId={}", ruleSet.getId());
+        } else {
+            log.debug("Executing ruleSetId={}, ruleSetName={}, stagingPostHash={}, username={}",
+                    ruleSet.getId(), ruleSet.getName(), stagingPost.getPostHash(), stagingPost.getUsername());
+            ruleSet.getRules()
+                    .forEach(rule -> execute(rule, stagingPost));
+        }
     }
 
     private void execute(Rule rule, StagingPost stagingPost) {
         long ruleId = rule.getId();
-        log.info("Executing ruleId={}, ruleName={}, stagingPostId={}, username={}, queueId={}, subscriptionid={}",
-                ruleId, rule.getName(), stagingPost.getId(), stagingPost.getUsername(), stagingPost.getQueueId(),
+        log.debug("Executing ruleId={}, ruleName={}, postHash={}, username={}, queueId={}, subscriptionid={}",
+                ruleId, rule.getName(), stagingPost.getPostHash(), stagingPost.getUsername(), stagingPost.getQueueId(),
                 stagingPost.getSubscriptionId()
         );
         //
@@ -55,8 +64,8 @@ public class RuleSetExecutor {
         // if the rule is a match, perform the actions
         //
         if (isMatch) {
-            log.info("Rule match: ruleId={}, ruleName={}, stagingPostId={}, username={}, queueId={}, subscriptionId={}",
-                    ruleId, rule.getName(), stagingPost.getId(), stagingPost.getUsername(), stagingPost.getQueueId(),
+            log.debug("Rule match: ruleId={}, ruleName={}, postHash={}, username={}, queueId={}, subscriptionId={}",
+                    ruleId, rule.getName(), stagingPost.getPostHash(), stagingPost.getUsername(), stagingPost.getQueueId(),
                     stagingPost.getSubscriptionId());
             ruleActionHandler.invokeActions(rule, stagingPost);
         }

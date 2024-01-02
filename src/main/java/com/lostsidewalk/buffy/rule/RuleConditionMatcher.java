@@ -37,8 +37,8 @@ class RuleConditionMatcher {
     }
 
     private boolean matches(long ruleId, FieldName fieldName, ComparisonType comparisonType, Object fieldValue, StagingPost stagingPost) {
-        log.info("Evaluating match condition, ruleId={}, fieldName={}, comparisonType={}, fieldValue={}, stagingPostId={}",
-                ruleId, fieldName, comparisonType, fieldValue, stagingPost.getId());
+        log.debug("Evaluating match condition, ruleId={}, fieldName={}, comparisonType={}, fieldValue={}, postHash={}",
+                ruleId, fieldName, comparisonType, fieldValue, stagingPost.getPostHash());
         boolean isMatch = false;
         String sourceValue = (fieldValue == null ? EMPTY : fieldValue.toString());
         switch (fieldName) {
@@ -63,8 +63,8 @@ class RuleConditionMatcher {
                 isMatch = ruleComparator.makeComparison(comparisonType, sourceValue, targetValue);
             }
         }
-        log.info("Match condition result={}, ruleId={}, fieldName={}, comparisonType={}, fieldValue={}, stagingPostId={}",
-                isMatch, ruleId, fieldName, comparisonType, fieldValue, stagingPost.getId());
+        log.debug("Match condition result={}, ruleId={}, fieldName={}, comparisonType={}, fieldValue={}, postHash={}",
+                isMatch, ruleId, fieldName, comparisonType, fieldValue, stagingPost.getPostHash());
         return isMatch;
     }
 
